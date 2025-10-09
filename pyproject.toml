@@ -1,0 +1,10 @@
+[project]
+name = "dafny-poetry"
+version = "0.0.3"
+description = "POETRY-style orchestrator for Dafny using dafny-admitter and Dafny Sketcher CLI"
+authors = [{name="AutoGen", email="none@example.com"}]
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+dafny-poetry = "dafny_poetry.cli:main"
