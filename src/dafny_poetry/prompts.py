@@ -4,11 +4,13 @@ Goal: reduce the number of outstanding obligations in the current file by editin
 of the method/lemma `{method}`. Keep the signature and name unchanged.
 
 Context (trimmed):
+--- full method/lemma declaration ---
+{full_decl}
 --- errors/warnings ---
 {errors}
 --- admits in this method ---
 {admits}
---- method body (original) ---
+--- method body (current) ---
 {method_body}
 
 Guidance:

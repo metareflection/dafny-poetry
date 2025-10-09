@@ -3,7 +3,7 @@ import pathlib, shutil, time, sys, re
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 from .dafny_io import run_dafny_admitter, run_sketcher, count_admits, collect_first_admit_context, write_version, replace_method_body
-from .utils import extract_method_body_region
+from .utils import extract_method_body_region, extract_method_declaration
 from . import llm_agent
 
 @dataclass
@@ -70,6 +70,7 @@ def run_poetry(src_path: pathlib.Path, args) -> Tuple[int, pathlib.Path]:
             # Collect admits within the same method (approx by slicing region)
             src_text = _read(curr.path)
             body_text = _method_body_text(src_text, method)
+            full_decl = extract_method_declaration(src_text, method)
             admits_snippets = []
             if body_text:
                 for line in body_text.splitlines():
@@ -77,7 +78,7 @@ def run_poetry(src_path: pathlib.Path, args) -> Tuple[int, pathlib.Path]:
                         admits_snippets.append(line.strip())
             new_body = None
             try:
-                new_body = llm_agent.propose_new_body(method, errors, "\n".join(admits_snippets), body_text, tries=max(1,args.llm_tries))
+                new_body = llm_agent.propose_new_body(method, errors, "\n".join(admits_snippets), body_text, full_decl=full_decl, tries=max(1,args.llm_tries))
             except Exception as e:
                 if args.verbose:
                     print(f"  [llm] skipped: {e}")
