@@ -3,9 +3,9 @@ BASE_PROMPT = """You are a Dafny proof repair assistant inside a recursive POETR
 Goal: reduce the number of outstanding obligations in the current file by editing ONLY the **body**
 of the method/lemma `{method}`. Keep the signature and name unchanged.
 
-Context (trimmed):
---- full method/lemma declaration ---
-{full_decl}
+Context:
+--- full file source (for reference) ---
+{file_source}
 --- errors/warnings ---
 {errors}
 --- admits in this method ---

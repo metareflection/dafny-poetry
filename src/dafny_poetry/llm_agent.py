@@ -17,7 +17,7 @@ def _between(s: str, left: str, right: str) -> Optional[str]:
     if j < 0: return None
     return s[i+len(left):j].strip("\n\r ")
 
-def propose_new_body(method: str, errors: str, admits: str, method_body: str, full_decl: str = "", tries: int = 1) -> Optional[str]:
+def propose_new_body(method: str, errors: str, admits: str, method_body: str, file_source: str = "", tries: int = 1) -> Optional[str]:
     """Ask the LLM for a repaired body for `method`. Returns the body text or None."""
     if generate is None:
         raise RuntimeError("LLM not available: import from llm.default_generate failed. Run with --use-llm only if installed.")
@@ -25,8 +25,8 @@ def propose_new_body(method: str, errors: str, admits: str, method_body: str, fu
     errors_safe = errors.strip()[:4000].replace('{', '{{').replace('}', '}}')
     admits_safe = admits.strip()[:2000].replace('{', '{{').replace('}', '}}')
     method_body_safe = method_body.strip()[:4000].replace('{', '{{').replace('}', '}}')
-    full_decl_safe = full_decl.strip()[:2000].replace('{', '{{').replace('}', '}}')
-    prompt = BASE_PROMPT.format(method=method, errors=errors_safe, admits=admits_safe, method_body=method_body_safe, full_decl=full_decl_safe)
+    file_source_safe = file_source.strip()[:8000].replace('{', '{{').replace('}', '}}')
+    prompt = BASE_PROMPT.format(method=method, errors=errors_safe, admits=admits_safe, method_body=method_body_safe, file_source=file_source_safe)
     last = None
     for k in range(tries):
         out = generate(prompt)

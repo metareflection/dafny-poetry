@@ -33,13 +33,17 @@ def run_dafny_admitter(dfy_path: pathlib.Path, mode: str="admit", only_failing: 
     return patched
 
 ADMIT_RE = re.compile(r'\bAdmit\s*\(')
+ADMIT_HELPER_RE = re.compile(r'lemma\s+\{:ghost\}\s+Admit\s*\(')
 
 def count_admits(dfy_path: pathlib.Path) -> int:
     try:
         src = dfy_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return 0
-    return len(ADMIT_RE.findall(src))
+    # Count all Admit calls minus the helper definition
+    all_admits = len(ADMIT_RE.findall(src))
+    helper_defs = len(ADMIT_HELPER_RE.findall(src))
+    return all_admits - helper_defs
 
 def collect_first_admit_context(dfy_path: pathlib.Path) -> Optional[Dict]:
     """Return info for the first Admit occurrence: line, col, method name, body region."""
