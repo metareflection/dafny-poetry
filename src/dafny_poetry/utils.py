@@ -2,7 +2,7 @@
 import re
 from typing import Tuple, Optional
 
-DECL_RE = re.compile(r'^\s*(method|lemma|function)\s+(\{[^}]*\}\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(')
+DECL_RE = re.compile(r'^\s*(method|lemma|function)\s+(\{[^}]*\}\s+)?([A-Za-z_][A-Za-z0-9_]*)(<[^>]+>)?\s*\(')
 
 def find_enclosing_decl(src: str, line_no: int) -> Optional[str]:
     """Return name of the method/lemma/function that encloses line_no (i.e., line_no is inside its body)."""
@@ -74,10 +74,10 @@ def extract_method_body_region(src: str, line_no: Optional[int]=None, method_nam
         method_name = find_enclosing_decl(src, line_no or 1)
     if method_name is None:
         return (None, None, None, None)
-    # Find declaration line (handle optional attributes like {:induction false})
+    # Find declaration line (handle optional attributes and type parameters)
     decl_line = None
     for i, ln in enumerate(lines):
-        if re.match(rf'^\s*(method|lemma|function)\s+(\{{[^}}]*\}}\s+)?{re.escape(method_name)}\s*\(', ln):
+        if re.match(rf'^\s*(method|lemma|function)\s+(\{{[^}}]*\}}\s+)?{re.escape(method_name)}(<[^>]+>)?\s*\(', ln):
             decl_line = i
             break
     if decl_line is None:
@@ -112,10 +112,10 @@ def extract_method_body_region(src: str, line_no: Optional[int]=None, method_nam
 def extract_method_declaration(src: str, method_name: str) -> str:
     """Extract the full declaration (signature + contracts) of a method/lemma/function, up to but not including the body."""
     lines = src.splitlines()
-    # Find declaration line (handle optional attributes like {:induction false})
+    # Find declaration line (handle optional attributes and type parameters)
     decl_line = None
     for i, ln in enumerate(lines):
-        if re.match(rf'^\s*(method|lemma|function)\s+(\{{[^}}]*\}}\s+)?{re.escape(method_name)}\s*\(', ln):
+        if re.match(rf'^\s*(method|lemma|function)\s+(\{{[^}}]*\}}\s+)?{re.escape(method_name)}(<[^>]+>)?\s*\(', ln):
             decl_line = i
             break
     if decl_line is None:
