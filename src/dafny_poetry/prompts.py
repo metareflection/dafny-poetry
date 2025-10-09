@@ -17,7 +17,7 @@ Guidance:
 - If induction is needed, set up a clean structural or rule induction *inside the body*.
 - Ensure the program remains syntactically valid Dafny.
 - Avoid introducing new unattached `Admit(...)`; the point is to **reduce** total admits.
-- If you add an `assert`, add a short `{:`hint`}` if obvious.
+- If you add an `assert`, add a short `{{:`hint`}}` if obvious.
 - Use existing helper lemmas when available.
 - If you cannot reduce obligations, improve localization (insert the currently failing postcondition as an `assert` where it belongs).
 

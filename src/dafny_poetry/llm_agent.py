@@ -4,7 +4,7 @@ import re, textwrap
 
 # Import the LLM entrypoint expected by the user.
 try:
-    from llm import default_generate as generate  # type: ignore
+    from .llm import default_generate as generate  # type: ignore
 except Exception as e:
     generate = None  # We'll check at call time.
 
@@ -21,7 +21,11 @@ def propose_new_body(method: str, errors: str, admits: str, method_body: str, tr
     """Ask the LLM for a repaired body for `method`. Returns the body text or None."""
     if generate is None:
         raise RuntimeError("LLM not available: import from llm.default_generate failed. Run with --use-llm only if installed.")
-    prompt = BASE_PROMPT.format(method=method, errors=errors.strip()[:4000], admits=admits.strip()[:2000], method_body=method_body.strip()[:4000])
+    # Escape curly braces in the content to avoid format string errors
+    errors_safe = errors.strip()[:4000].replace('{', '{{').replace('}', '}}')
+    admits_safe = admits.strip()[:2000].replace('{', '{{').replace('}', '}}')
+    method_body_safe = method_body.strip()[:4000].replace('{', '{{').replace('}', '}}')
+    prompt = BASE_PROMPT.format(method=method, errors=errors_safe, admits=admits_safe, method_body=method_body_safe)
     last = None
     for k in range(tries):
         out = generate(prompt)

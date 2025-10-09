@@ -1,12 +1,14 @@
 
 module Example {
-  function plus(x: nat, y: nat): nat {
-    x + y
+  function sum(n: nat): nat
+    decreases n
+  {
+    if n == 0 then 0 else n + sum(n-1)
   }
 
-  lemma AddCommut(n: nat, m: nat)
-    ensures plus(n,m) == plus(m,n)
+  lemma {:induction false} SumFormula(n: nat)
+    ensures 2 * sum(n) == n * (n + 1)
   {
-    // intentionally empty, will fail and be sketched
+    // intentionally empty, will fail without induction
   }
 }

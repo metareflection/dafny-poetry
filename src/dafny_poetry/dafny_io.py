@@ -16,13 +16,20 @@ def run_dafny_admitter(dfy_path: pathlib.Path, mode: str="admit", only_failing: 
         timeout=timeout, check=False
     )
     # The admitter writes a *.patched.dfy next to the input
-    patched = dfy_path.with_suffix(".patched.dfy")
+    # Handle case where input already has .patched in the name
+    if dfy_path.stem.endswith('.patched'):
+        # Input is like "foo.patched.dfy" -> output is "foo.patched.patched.dfy"
+        patched = dfy_path.parent / (dfy_path.stem + ".patched.dfy")
+    else:
+        # Input is like "foo.dfy" -> output is "foo.patched.dfy"
+        patched = dfy_path.with_suffix(".patched.dfy")
+
     if not patched.exists():
         # If admitter supports stdout mode: detect and write
         if out.stdout.strip():
             patched.write_text(out.stdout)
         else:
-            raise RuntimeError("dafny-admitter did not produce a patched file.")
+            raise RuntimeError(f"dafny-admitter did not produce a patched file. Expected: {patched}\nstdout: {out.stdout}\nstderr: {out.stderr}")
     return patched
 
 ADMIT_RE = re.compile(r'\bAdmit\s*\(')

@@ -106,9 +106,11 @@ def run_poetry(src_path: pathlib.Path, args) -> Tuple[int, pathlib.Path]:
             break
         visited.add(sig)
 
-        # As a simple branching heuristic, move admit cursor by replacing the first Admit with a comment to focus on the next one
+        # As a simple branching heuristic, move admit cursor by replacing the first Admit call with a comment to focus on the next one
+        # BUT: avoid commenting out the Admit helper lemma definition
         text = _read(curr.path)
-        new_text = re.sub(r'Admit\s*\(', '// Admit(', text, count=1)
+        # Match Admit calls but NOT the lemma definition (which has "lemma" before it)
+        new_text = re.sub(r'(?<!lemma\s\{:ghost\}\s)Admit\s*\("', '// Admit("', text, count=1)
         if new_text != text:
             cand = write_version(args.out_dir, curr.path, f"shift_{depth}", new_text)
             cand2 = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
