@@ -23,11 +23,10 @@ def propose_new_body(method: str, errors: str, admits: str, method_body: str, fi
     prompt = BASE_PROMPT.format(method=method, errors=errors_safe, admits=admits_safe, method_body=method_body_safe, file_source=file_source_safe)
     last = None
     for k in range(tries):
-        out = generate(prompt)
+        full_prompt = prompt + "\n\nYour previous output did not include a valid body block. Return ONLY the body between the markers."
+        out = generate(full_prompt)
         body = _between(out, "<<BEGIN_BODY>>", "<<END_BODY>>")
         if body and body.strip():
             return body.strip()
         last = out
-        # Be stricter in the next attempt
-        prompt = prompt + "\n\nYour previous output did not include a valid body block. Return ONLY the body between the markers."
     return None
