@@ -1,6 +1,6 @@
 # dafny-poetry
 
-A small orchestrator that runs a POETRY‑style loop over Dafny programs.
+A small orchestrator that runs a [POETRY][poetry]‑style loop over Dafny programs.
 It depends on:
 
 - `dafny-admitter` – to turn outstanding verification failures into `Admit("…", φ)` obligations (verifiable sketches)
@@ -31,3 +31,5 @@ the file verifies with `Admit(...)` placeholders and to measure progress (# of a
 - This orchestrator keeps things simple and deterministic; it's easy to extend with more actions.
 - It is agnostic to the `dafny-admitter` Boogie/Dafny internals; it only reads the produced admits.
 - When `--use-llm` is off or the `llm` module is unavailable, it runs purely symbolically.
+
+[poetry]: https://neurips.cc/virtual/2024/poster/93034
