@@ -2,11 +2,7 @@
 from typing import Optional, List, Dict
 import re, textwrap
 
-# Import the LLM entrypoint expected by the user.
-try:
-    from .llm import default_generate as generate  # type: ignore
-except Exception as e:
-    generate = None  # We'll check at call time.
+from .llm import default_generate as generate
 
 from .prompts import BASE_PROMPT
 
@@ -19,8 +15,6 @@ def _between(s: str, left: str, right: str) -> Optional[str]:
 
 def propose_new_body(method: str, errors: str, admits: str, method_body: str, file_source: str = "", tries: int = 1) -> Optional[str]:
     """Ask the LLM for a repaired body for `method`. Returns the body text or None."""
-    if generate is None:
-        raise RuntimeError("LLM not available: import from llm.default_generate failed. Run with --use-llm only if installed.")
     # Escape curly braces in the content to avoid format string errors
     errors_safe = errors.strip()[:4000].replace('{', '{{').replace('}', '}}')
     admits_safe = admits.strip()[:2000].replace('{', '{{').replace('}', '}}')
