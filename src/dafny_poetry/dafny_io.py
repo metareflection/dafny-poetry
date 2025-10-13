@@ -1,7 +1,7 @@
 
 import subprocess, pathlib, re, tempfile, shutil, json, os
 from typing import List, Tuple, Optional, Dict
-from .utils import find_enclosing_decl, extract_method_body_region
+from .utils import find_enclosing_decl, extract_method_body_region, extract_method_body_text
 
 def _run(cmd: list, cwd=None, check=True, capture_output=True, text=True, timeout=None):
     p = subprocess.run(cmd, cwd=cwd, check=False, capture_output=capture_output, text=text, timeout=timeout)
@@ -73,11 +73,34 @@ def write_version(out_dir: pathlib.Path, base: pathlib.Path, label: str, text: s
 def replace_method_body(dfy_text: str, method_name: str, new_body: str) -> str:
     """Replace the *body* (between braces) of the given method/lemma/function by new_body.
        Returns new source or raises ValueError.
+       Properly handles code on the same lines as opening/closing braces.
     """
     start_line, end_line, body_l, body_r = extract_method_body_region(dfy_text, None, method_name=method_name)
     if start_line is None:
         raise ValueError(f"Cannot locate body of method {method_name}")
+    
     lines = dfy_text.splitlines()
-    # Keep header and closing brace, replace the middle region [body_l+1 : body_r]
-    new_lines = lines[:body_l+1] + [new_body.rstrip("\n")] + lines[body_r:]
+    
+    # Build the opening brace line with just the brace (no old body content)
+    open_line = lines[body_l]
+    open_brace_pos = open_line.find('{')
+    if open_brace_pos < 0:
+        raise ValueError(f"Cannot find opening brace in method {method_name}")
+    new_open_line = open_line[:open_brace_pos+1]  # Keep everything up to and including '{'
+    
+    # Build the closing brace line with just the brace (no old body content)
+    close_line = lines[body_r]
+    close_brace_pos = close_line.rfind('}')
+    if close_brace_pos < 0:
+        raise ValueError(f"Cannot find closing brace in method {method_name}")
+    new_close_line = close_line[close_brace_pos:]  # Keep '}' and everything after
+    
+    # Assemble: lines before opening brace + new body + lines after closing brace
+    new_lines = (
+        lines[:body_l] +
+        [new_open_line] +
+        [new_body.rstrip("\n")] +
+        [new_close_line] +
+        lines[body_r+1:]
+    )
     return "\n".join(new_lines)

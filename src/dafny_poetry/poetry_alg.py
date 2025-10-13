@@ -3,7 +3,7 @@ import pathlib, shutil, time, sys, re
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 from .dafny_io import run_dafny_admitter, run_sketcher, count_admits, collect_first_admit_context, write_version, replace_method_body
-from .utils import extract_method_body_region, extract_method_declaration
+from .utils import extract_method_body_text
 from . import llm_agent
 
 @dataclass
@@ -14,14 +14,6 @@ class State:
 
 def _read(p: pathlib.Path) -> str:
     return p.read_text(encoding="utf-8", errors="ignore")
-
-def _method_body_text(src: str, method: str) -> str:
-    start_line, end_line, bl, br = extract_method_body_region(src, None, method_name=method)
-    if bl is None:
-        return ""
-    lines = src.splitlines()
-    # body content between '{' line and closing '}' line (exclusive of closing brace)
-    return "\n".join(lines[bl+1:br])
 
 def run_poetry(src_path: pathlib.Path, args) -> Tuple[int, pathlib.Path]:
     start = time.time()
@@ -69,7 +61,7 @@ def run_poetry(src_path: pathlib.Path, args) -> Tuple[int, pathlib.Path]:
             errors = run_sketcher(curr.path, "errors_warnings", method=None, timeout=60)
             # Collect admits within the same method (approx by slicing region)
             src_text = _read(curr.path)
-            body_text = _method_body_text(src_text, method)
+            body_text = extract_method_body_text(src_text, method)
             admits_snippets = []
             if body_text:
                 for line in body_text.splitlines():
