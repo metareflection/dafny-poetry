@@ -10,7 +10,7 @@ import shutil
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
-from .poetry_alg import run_poetry
+from .poetry_recursive import run_poetry, PoetryConfig
 
 
 @dataclass
@@ -69,20 +69,20 @@ def verify_dafny(
         src_file = out_dir / "input.dfy"
         src_file.write_text(dfy_source, encoding="utf-8")
 
-        # Create args object that matches argparse Namespace
-        class Args:
-            def __init__(self):
-                self.max_depth = max_depth
-                self.use_llm = use_llm
-                self.llm_tries = llm_tries
-                self.global_timeout = timeout
-                self.verbose = verbose
-                self.out_dir = out_dir
-
-        args = Args()
+        # Create config object
+        config = PoetryConfig(
+            max_depth=max_depth,
+            max_branches=2,  # Default
+            global_timeout=timeout,
+            local_timeout=120,  # Default
+            use_llm=use_llm,
+            llm_tries=llm_tries,
+            out_dir=out_dir,
+            verbose=verbose
+        )
 
         # Run POETRY
-        exit_code, final_path = run_poetry(src_file, args)
+        exit_code, final_path = run_poetry(src_file, config)
 
         # Count final admits
         from .dafny_io import count_admits
