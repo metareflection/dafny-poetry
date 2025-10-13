@@ -3,8 +3,8 @@
 A small orchestrator that runs a [POETRY][poetry]‑style loop over Dafny programs.
 It depends on:
 
-- `dafny-admitter` – to turn outstanding verification failures into `Admit("…", φ)` obligations (verifiable sketches)
-- `dafny-sketcher-cli` – to generate inductive skeletons, counterexamples, and to query errors/warnings
+- [`dafny-admitter`][dafny-admitter] – to turn outstanding verification failures into `Admit("…", φ)` obligations (verifiable sketches)
+- [`dafny-sketcher-cli`][dafny-sketcher-cli] – to generate inductive skeletons, counterexamples, and to query errors/warnings
 
 ## Install (editable)
 
@@ -33,3 +33,5 @@ the file verifies with `Admit(...)` placeholders and to measure progress (# of a
 - When `--use-llm` is off or the `llm` module is unavailable, it runs purely symbolically.
 
 [poetry]: https://neurips.cc/virtual/2024/poster/93034
+[dafny-admitter]: https://github.com/metareflection/dafny-admitter
+[dafny-sketcher-cli]: https://github.com/namin/dafny-sketcher/blob/main/cli/AGENTS.md
