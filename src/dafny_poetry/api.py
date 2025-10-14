@@ -27,6 +27,7 @@ class PoetryResult:
 def verify_dafny(
     dfy_source: str,
     max_depth: int = 3,
+    use_sketcher: bool = True,
     use_llm: bool = True,
     llm_tries: int = 2,
     timeout: int = 600,
@@ -75,6 +76,7 @@ def verify_dafny(
             max_branches=2,  # Default
             global_timeout=timeout,
             local_timeout=120,  # Default
+            use_sketcher=use_sketcher,
             use_llm=use_llm,
             llm_tries=llm_tries,
             out_dir=out_dir,

@@ -31,6 +31,7 @@ class PoetryConfig:
     max_branches: int = 2  # Number of LLM samples per expansion
     global_timeout: int = 600
     local_timeout: int = 120  # Per level for depth > 1
+    use_sketcher: bool = True
     use_llm: bool = True
     llm_tries: int = 2
     out_dir: pathlib.Path = pathlib.Path("poetry_out")
@@ -65,28 +66,29 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
         print(f"  [expand] node={node.admits} admits, method={method}, score={node.score:.2f}")
     
     # Action 1: Try induction search
-    try:
-        _ = run_sketcher(node.file_path, "induction_search", method=method, timeout=120)
-        after_induction = run_dafny_admitter(node.file_path, mode="admit", 
-                                             only_failing=True, timeout=180)
-        admits_after = count_admits(after_induction)
-        
-        if admits_after < node.admits:
-            # Progress made!
-            child = ProofNode(
-                file_path=after_induction,
-                admits=admits_after,
-                parent=node,
-                action_taken="induction",
-                score=node.score + 1.0,  # Positive score for progress
-                depth=node.depth
-            )
-            children.append(child)
+    if config.use_sketcher:
+        try:
+            _ = run_sketcher(node.file_path, "induction_search", method=method, timeout=120)
+            after_induction = run_dafny_admitter(node.file_path, mode="admit", 
+                                                only_failing=True, timeout=180)
+            admits_after = count_admits(after_induction)
+            
+            if admits_after < node.admits:
+                # Progress made!
+                child = ProofNode(
+                    file_path=after_induction,
+                    admits=admits_after,
+                    parent=node,
+                    action_taken="induction",
+                    score=node.score + 1.0,  # Positive score for progress
+                    depth=node.depth
+                )
+                children.append(child)
+                if config.verbose:
+                    print(f"    [induction] → {admits_after} admits (was {node.admits})")
+        except Exception as e:
             if config.verbose:
-                print(f"    [induction] → {admits_after} admits (was {node.admits})")
-    except Exception as e:
-        if config.verbose:
-            print(f"    [induction] failed: {e}")
+                print(f"    [induction] failed: {e}")
     
     # Action 2: Try LLM refinement (multiple samples)
     if config.use_llm:
