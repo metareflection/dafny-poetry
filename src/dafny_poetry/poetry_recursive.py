@@ -104,14 +104,14 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                         print(f"    [induction] → {admits_after} admits (was {node.admits}) but adding at top level")
                     add_child = True
                 if add_child:
-                    children.append(ProofNode(
+                    child =ProofNode(
                         file_path=cand_after,
                         admits=admits_after,
                         parent=node,
                         action_taken="induction",
                         score=node.score + 1.0,
                         depth=node.depth
-                    ))
+                    )
                     children.append(child)
                 else:
                     if config.verbose:
