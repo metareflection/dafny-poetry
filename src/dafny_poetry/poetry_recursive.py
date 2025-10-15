@@ -89,8 +89,6 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                 current_body = extract_method_body_text(src_text, method)
                 replaced = replace_method_body(src_text, method, sk_body.strip())
                 cand = write_version(config.out_dir, node.file_path, f"induct_{node.depth}", replaced)
-                if config.verbose:
-                    print(f"    [induction] → wrote {cand}")
                 # Verify the candidate and apply the same admit gate
                 cand_after = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
                 admits_after = count_admits(cand_after)
