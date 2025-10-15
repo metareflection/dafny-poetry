@@ -42,6 +42,20 @@ def _read(p: pathlib.Path) -> str:
     """Read file content."""
     return p.read_text(encoding="utf-8", errors="ignore")
 
+def _looks_like_method_entry(body: str) -> bool:
+    # empty or only comments/whitespace + a single top-level Admit(...)
+    stripped = body.strip()
+    if not stripped:
+        return True
+    # Allow leading comments/blank lines
+    # Then require the first real token to be Admit(
+    import re
+    return re.match(r'^(?:\s*//.*\n|\s*)*Admit\s*\(', body) is not None
+
+def  _looks_top_level(node: ProofNode, body: str) -> bool:
+    at_level_root = (node.parent is None)   # root of this BFS level (top of theorem OR subgoal)
+    at_method_entry = _looks_like_method_entry(body)
+    return at_level_root and at_method_entry
 
 def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
     """
@@ -68,24 +82,38 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
     # Action 1: Try induction search
     if config.use_sketcher:
         try:
-            _ = run_sketcher(node.file_path, "induction_search", method=method, timeout=120)
-            after_induction = run_dafny_admitter(node.file_path, mode="admit", 
-                                                only_failing=True, timeout=180)
-            admits_after = count_admits(after_induction)
-            
-            if admits_after < node.admits:
-                # Progress made!
-                child = ProofNode(
-                    file_path=after_induction,
-                    admits=admits_after,
-                    parent=node,
-                    action_taken="induction",
-                    score=node.score + 1.0,  # Positive score for progress
-                    depth=node.depth
-                )
-                children.append(child)
+            sk_body = run_sketcher(node.file_path, "induction_search", method=method, timeout=120)
+            if sk_body and sk_body.strip():
+                src_text = _read(node.file_path)
+                replaced = replace_method_body(src_text, method, sk_body.strip())
+                cand = write_version(config.out_dir, node.file_path, f"induct_{node.depth}", replaced)
                 if config.verbose:
-                    print(f"    [induction] → {admits_after} admits (was {node.admits})")
+                    print(f"    [induction] → wrote {cand}")
+                # Verify the candidate and apply the same admit gate
+                cand_after = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
+                admits_after = count_admits(cand_after)
+                add_child = False
+                if admits_after < node.admits:
+                    if config.verbose:
+                        print(f"    [induction] → {admits_after} admits (was {node.admits})")
+                    add_child = True
+                if not add_child and _looks_top_level(node, src_text):
+                    if config.verbose:
+                        print(f"    [induction] → {admits_after} admits (was {node.admits}) but adding at top level")
+                    add_child = True
+                if add_child:
+                    children.append(ProofNode(
+                        file_path=cand_after,
+                        admits=admits_after,
+                        parent=node,
+                        action_taken="induction",
+                        score=node.score + 1.0,
+                        depth=node.depth
+                    ))
+                    children.append(child)
+                else:
+                    if config.verbose:
+                        print(f"    [induction] skipped")
         except Exception as e:
             if config.verbose:
                 print(f"    [induction] failed: {e}")
