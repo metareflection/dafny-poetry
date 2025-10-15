@@ -85,6 +85,8 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
             sk_body = run_sketcher(node.file_path, "induction_search", method=method, timeout=120)
             if sk_body and sk_body.strip():
                 src_text = _read(node.file_path)
+                # Extract the current method body to check if we're at top level
+                current_body = extract_method_body_text(src_text, method)
                 replaced = replace_method_body(src_text, method, sk_body.strip())
                 cand = write_version(config.out_dir, node.file_path, f"induct_{node.depth}", replaced)
                 if config.verbose:
@@ -97,7 +99,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                     if config.verbose:
                         print(f"    [induction] → {admits_after} admits (was {node.admits})")
                     add_child = True
-                if not add_child and _looks_top_level(node, src_text):
+                if not add_child and _looks_top_level(node, current_body or ""):
                     if config.verbose:
                         print(f"    [induction] → {admits_after} admits (was {node.admits}) but adding at top level")
                     add_child = True
