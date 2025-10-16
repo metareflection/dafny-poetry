@@ -79,53 +79,56 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
     if config.verbose:
         print(f"  [expand] node={node.admits} admits, method={method}, score={node.score:.2f}")
     
-    # Action 1: Try induction search
-    if config.use_sketcher:
-        try:
-            sk_body = run_sketcher(node.file_path, "induction_search", method=method, timeout=120)
-            if sk_body and sk_body.strip():
-                src_text = _read(node.file_path)
-                # Extract the current method body to check if we're at top level
-                current_body = extract_method_body_text(src_text, method)
-                replaced = replace_method_body(src_text, method, sk_body.strip())
-                cand = write_version(config.out_dir, node.file_path, f"induct_{node.depth}", replaced)
-                # Verify the candidate and apply the same admit gate
-                cand_after = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
-                admits_after = count_admits(cand_after)
-                add_child = False
-                if admits_after < node.admits:
-                    if config.verbose:
-                        print(f"    [induction] → {admits_after} admits (was {node.admits})")
-                    add_child = True
-                if not add_child and _looks_top_level(node, current_body or ""):
-                    if config.verbose:
-                        print(f"    [induction] → {admits_after} admits (was {node.admits}) but adding at top level")
-                    add_child = True
-                if add_child:
-                    child =ProofNode(
-                        file_path=cand_after,
-                        admits=admits_after,
-                        parent=node,
-                        action_taken="induction",
-                        score=node.score + 1.0,
-                        depth=node.depth
-                    )
-                    children.append(child)
-                else:
-                    if config.verbose:
-                        print(f"    [induction] skipped")
-        except Exception as e:
-            if config.verbose:
-                print(f"    [induction] failed: {e}")
-    
-    # Action 2: Try LLM refinement (multiple samples)
     if config.use_llm:
         # Lazy import of llm_agent
         global llm_agent
         if llm_agent is None:
             from . import llm_agent as llm_agent_module
             llm_agent = llm_agent_module
-        
+
+    # Action 1: Try induction search or LLM sketch
+    src_text = _read(node.file_path)
+    current_body = extract_method_body_text(src_text, method)
+    if _looks_top_level(node, current_body or ""):
+        if config.use_sketcher or config.use_llm:
+            try:
+                if config.use_sketcher:
+                    sk_body = run_sketcher(node.file_path, "induction_search", method=method, timeout=120)
+                elif config.use_llm:
+                    sk_body = llm_agent.propose_new_body(
+                        method, "", "",  "", file_source=src_text, 
+                        tries=max(1, config.llm_tries), sketch=True)
+                if sk_body and sk_body.strip():
+                    src_text = _read(node.file_path)
+                    replaced = replace_method_body(src_text, method, sk_body.strip())
+                    cand = write_version(config.out_dir, node.file_path, f"sketch_{node.depth}", replaced)
+                    # Verify the candidate and apply the same admit gate
+                    cand_after = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
+                    admits_after = count_admits(cand_after)
+                    try:
+                        _ = run_sketcher(cand_after, "errors_warnings", method=None, timeout=60)
+                        add_child = True
+                    except Exception as e:
+                        add_child = False
+                        if config.verbose:
+                            print(f"    [sketch] failed to verify: {e}")
+
+                    if add_child:
+                        child =ProofNode(
+                            file_path=cand_after,
+                            admits=admits_after,
+                            parent=node,
+                            action_taken="induction" if config.use_sketcher else "llm_sketch",
+                            score=node.score + 1.0,
+                            depth=node.depth
+                        )
+                        children.append(child)
+            except Exception as e:
+                if config.verbose:
+                    print(f"    [sketch] failed: {e}")
+    
+    # Action 2: Try LLM refinement (multiple samples)
+    if config.use_llm:
         src_text = _read(node.file_path)
         body_text = extract_method_body_text(src_text, method)
         

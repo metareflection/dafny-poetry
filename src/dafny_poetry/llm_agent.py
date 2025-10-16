@@ -5,7 +5,7 @@ from string import Template
 
 from .llm import default_generate as generate
 
-from .prompts import BASE_PROMPT
+from .prompts import BASE_PROMPT, SKETCH_PROMPT
 
 def _between(s: str, left: str, right: str) -> Optional[str]:
     i = s.find(left)
@@ -14,10 +14,10 @@ def _between(s: str, left: str, right: str) -> Optional[str]:
     if j < 0: return None
     return s[i+len(left):j].strip("\n\r ")
 
-def propose_new_body(method: str, errors: str, admits: str, method_body: str, file_source: str = "", tries: int = 1) -> Optional[str]:
+def propose_new_body(method: str, errors: str, admits: str, method_body: str, file_source: str = "", tries: int = 1, sketch: bool = False) -> Optional[str]:
     """Ask the LLM for a repaired body for `method`. Returns the body text or None."""
     # Use Template to avoid needing to escape braces in code
-    template = Template(BASE_PROMPT)
+    template = Template(BASE_PROMPT if not sketch else SKETCH_PROMPT)
     prompt = template.substitute(
         method=method,
         errors=errors.strip()[:4000],
