@@ -57,3 +57,29 @@ Return ONLY the new body content between the markers below (no surrounding brace
 ... your revised body statements ...
 <<END_BODY>>
 """
+
+SINGLE_ADMIT_PATCH_PROMPT = """You are editing Dafny. Replace only the TARGET statement with code that advances the proof in this scope.
+Do not modify any other lines. Do not change the method signature/specs. 
+Do not use 'assume' or 'reveal'. You may add a small block, 'assert', 'calc { ... }', 
+and calls to existing lemmas. Output only the replacement code.
+
+Context:
+--- full file source (for reference) ---
+$file_source
+--- errors/warnings ---
+$errors
+--- method/lemma ---
+$method
+--- target line text ---
+$target_line_text
+--- local context before ---
+$local_context_before
+--- local context after ---
+$local_context_after
+
+Return ONLY the new Dafny code between the markers below:
+
+<<BEGIN_DAFNY>>
+... your Dafny code ...
+<<END_DAFNY>>
+"""

@@ -10,8 +10,9 @@ Implements the full POETRY algorithm from the paper:
 
 import pathlib
 import time
-from typing import Tuple, Optional, List
+from typing import Tuple, List
 from dataclasses import dataclass
+import re
 
 from .proof_tree import ProofNode, SorryEdge, SearchTree, NodeStatus, SorryStatus
 from .dafny_io import (
@@ -20,9 +21,12 @@ from .dafny_io import (
 )
 from .utils import extract_method_body_text
 
+# Seed guardrail: allow small admit growth when installing a first sketch.
+# Keeps "one-line Admit -> case skeleton" from exploding search space.
+STRUCTURE_DELTA_MAX = 3
+
 # Lazy import to avoid requiring LLM setup at import time
 llm_agent = None
-
 
 @dataclass
 class PoetryConfig:
@@ -41,6 +45,42 @@ class PoetryConfig:
 def _read(p: pathlib.Path) -> str:
     """Read file content."""
     return p.read_text(encoding="utf-8", errors="ignore")
+
+def _read_lines(p: pathlib.Path) -> List[str]:
+    return p.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+def _build_admit_context(file_path: pathlib.Path, ctx: dict, window: int = 12) -> dict:
+    """
+    Build a small local slice around the focused Admit(...) for patching.
+    ctx['line'] is 1-based (from collect_first_admit_context).
+    """
+    lines = _read_lines(file_path)
+    i = max(0, int(ctx.get("line", 1)) - 1)
+    lo = max(0, i - window)
+    hi = min(len(lines), i + window + 1)
+    indent_match = re.match(r'\s*', lines[i]) if i < len(lines) else None
+    indent = indent_match.group(0) if indent_match else ""
+    return {
+        "target_line": i,
+        "indent": indent,
+        "snippet_before": "\n".join(lines[lo:i]),
+        "target_line_text": lines[i] if i < len(lines) else "",
+        "snippet_after": "\n".join(lines[i+1:hi]),
+        "lo": lo, "hi": hi
+    }
+
+def _apply_admit_patch(src_text: str, line_no: int, replacement: str) -> str:
+    """Replace exactly one line (the Admit line) with the LLM patch, preserving indentation."""
+    lines = src_text.splitlines()
+    if line_no < 0 or line_no >= len(lines): return src_text
+    indent = re.match(r'\s*', lines[line_no]).group(0)
+    rep = replacement.strip()
+    # Strip stray fences if the LLM emitted them
+    rep = re.sub(r'^\s*```[a-zA-Z]*\s*', '', rep)
+    rep = re.sub(r'\s*```$', '', rep)
+    rep_lines = [(indent + ln) if ln.strip() else ln for ln in rep.splitlines()]
+    lines[line_no:line_no+1] = rep_lines
+    return "\n".join(lines)
 
 def _looks_like_method_entry(body: str) -> bool:
     # empty or only comments/whitespace + a single top-level Admit(...)
@@ -63,8 +103,8 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
     Returns list of child nodes created.
     
     Actions tried:
-    1. Induction search (symbolic)
-    2. LLM refinement (multiple samples if enabled)
+    1. For top-level method body: sketching (either symbolic induction sketch or LLM-based sketch)
+    2. 2. LLM refinement as a single‑admit patch (multiple samples if enabled)
     """
     children = []
     
@@ -90,6 +130,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
     src_text = _read(node.file_path)
     current_body = extract_method_body_text(src_text, method)
     if _looks_top_level(node, current_body or ""):
+        if config.verbose: print(f"    [top-level] method={method}")
         if config.use_sketcher or config.use_llm:
             try:
                 if config.use_sketcher:
@@ -105,15 +146,17 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                     # Verify the candidate and apply the same admit gate
                     cand_after = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
                     admits_after = count_admits(cand_after)
+                    # Must compile
                     try:
                         _ = run_sketcher(cand_after, "errors_warnings", method=None, timeout=60)
-                        add_child = True
+                        compiles = True
                     except Exception as e:
-                        add_child = False
-                        if config.verbose:
-                            print(f"    [sketch] failed to verify: {e}")
-
-                    if add_child:
+                        compiles = False
+                        if config.verbose: print(f"    [sketch] failed to verify: {e}")
+                    # Seed acceptance: either strict improvement, or small admit growth at method entry
+                    progress = admits_after < node.admits
+                    small_growth_ok = admits_after <= node.admits + STRUCTURE_DELTA_MAX
+                    if compiles and (progress or small_growth_ok):
                         child =ProofNode(
                             file_path=cand_after,
                             admits=admits_after,
@@ -123,65 +166,61 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                             depth=node.depth
                         )
                         children.append(child)
+                        if config.verbose:
+                            print(f"    [sketch] accepted: {admits_after} admits (was {node.admits})")
+                    else:
+                        if config.verbose: print(f"    [sketch] rejected: progress={progress}, small_growth_ok={small_growth_ok}, compiles={compiles}")
             except Exception as e:
                 if config.verbose:
                     print(f"    [sketch] failed: {e}")
+    else:
+        if config.verbose: print(f"    [non-top-level] method={method}")
     
-    # Action 2: Try LLM refinement (multiple samples)
+    # Action 2: Try LLM refinement as a single‑admit patch (multiple samples)
     if config.use_llm:
         src_text = _read(node.file_path)
-        body_text = extract_method_body_text(src_text, method)
-        
-        # Collect admits in this method
-        admits_snippets = []
-        if body_text:
-            for line in body_text.splitlines():
-                if "Admit(" in line:
-                    admits_snippets.append(line.strip())
-        
-        # Get errors for context
-        try:
-            errors = run_sketcher(node.file_path, "errors_warnings", 
-                                method=None, timeout=60)
-        except:
-            errors = ""
-        
+        errors = ""
+        # Build precise local context around the focused admit
+        admit_ctx = _build_admit_context(node.file_path, ctx)
+
         # Generate multiple LLM candidates
         for sample_idx in range(config.max_branches):
             try:
-                new_body = llm_agent.propose_new_body(
-                    method, errors, "\n".join(admits_snippets), 
-                    body_text, file_source=src_text, 
-                    tries=max(1, config.llm_tries)
-                )
-                
-                if new_body:
-                    replaced = replace_method_body(src_text, method, new_body)
-                    cand = write_version(config.out_dir, node.file_path, 
-                                       f"llm_{node.depth}_{sample_idx}", replaced)
-                    
-                    # Verify
-                    _ = run_sketcher(cand, "errors_warnings", method=None, timeout=60)
-                    cand_patched = run_dafny_admitter(cand, mode="admit", 
-                                                     only_failing=True, timeout=180)
+                patch_text = llm_agent.propose_patch_for_admit(
+                        method=method,
+                        errors=errors,
+                        target_line_text=admit_ctx["target_line_text"],
+                        local_context_before=admit_ctx["snippet_before"],
+                        local_context_after=admit_ctx["snippet_after"],
+                        file_source=src_text,
+                        tries=max(1, config.llm_tries),
+                    )
+
+                if patch_text and patch_text.strip():
+                    # Apply a *surgical* patch: replace only the target Admit line
+                    patched_src = _apply_admit_patch(src_text, admit_ctx["target_line"], patch_text)
+                    cand = write_version(
+                        config.out_dir, node.file_path, f"llm_patch_{node.depth}_{sample_idx}", patched_src
+                    )
+
+                    # Verify candidate
+                    _ = run_sketcher(cand, "errors_warnings", method=None, timeout=60)  # parse/typecheck gate
+                    cand_patched = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
                     admits_after = count_admits(cand_patched)
-                    
+
                     if admits_after < node.admits:
-                        # Progress made!
-                        # Score could be LLM log probability, but we don't have it
-                        # Use admit reduction as heuristic
-                        score_delta = float(node.admits - admits_after)
+                        score_delta = float(node.admits - admits_after) + 0.5  # small bonus for eliminating the focus
                         child = ProofNode(
                             file_path=cand_patched,
                             admits=admits_after,
                             parent=node,
-                            action_taken=f"llm_{sample_idx}",
+                            action_taken=f"llm_patch_{sample_idx}",
                             score=node.score + score_delta,
                             depth=node.depth
                         )
                         children.append(child)
                         if config.verbose:
-                            print(f"    [llm_{sample_idx}] → {admits_after} admits (was {node.admits})")
+                            print(f"    [llm_patch_{sample_idx}] → {admits_after} admits (was {node.admits})")
             except Exception as e:
                 if config.verbose:
                     print(f"    [llm_{sample_idx}] failed: {e}")
