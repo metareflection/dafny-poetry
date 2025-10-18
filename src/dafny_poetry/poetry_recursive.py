@@ -193,7 +193,8 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
     else:
         if config.verbose: print(f"    [non-top-level] method={method}")
  
-     # Action 2.1: Oracle refinement as a single‑admit patch (multiple samples)
+    # Action 2.1: Oracle refinement as a single‑admit patch (multiple samples)
+    oracle_ok = False
     if config.oracle:
         src_text = _read(node.file_path)
         errors = ""
@@ -218,6 +219,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                     admits_after = count_admits(cand_patched)
 
                     if admits_after < node.admits:
+                        oracle_ok = True
                         score_delta = float(node.admits - admits_after) + 0.5  # small bonus for eliminating the focus
                         child = ProofNode(
                             file_path=cand_patched,
@@ -235,7 +237,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                     print(f"    [oracle_{sample_idx}] failed: {e}")
   
     # Action 2.2: LLM refinement as a single‑admit patch (multiple samples)
-    if config.use_llm:
+    if not oracle_ok and config.use_llm:
         src_text = _read(node.file_path)
         errors = ""
         # Build precise local context around the focused admit
