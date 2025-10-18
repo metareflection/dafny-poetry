@@ -6,6 +6,8 @@ Implements the full POETRY algorithm from the paper:
 - Best-first node selection by cumulative score
 - Sorry edge handling and sub-goal recursion
 - Status propagation and backpropagation
+
+Paper note: When a deeper-level search on a sketch fails, convert the paused HP path back to OPEN (HP→OPEN) and resume BFS at the current level (POETRY Fig. 2(c), Appendix A.1).
 """
 
 import pathlib
@@ -27,6 +29,20 @@ STRUCTURE_DELTA_MAX = 3
 
 # Lazy import to avoid requiring LLM setup at import time
 llm_agent = None
+
+# Paper-aligned helper: HP→OPEN along the path (Fig. 2(c), Appendix A.1)
+# ---------------------------------------------------------------------------
+def _hp_path_to_open(node: "ProofNode") -> None:
+    """
+    Convert the whole HALF_PROVED path containing `node` back to OPEN,
+    walking from `node` to the root. This matches the paper's HP→OPEN
+    backtracking on recursion failure (Fig. 2(c)).
+    """
+    current = node
+    while current is not None:
+        if getattr(current, "status", None) == NodeStatus.HALF_PROVED:
+            current.status = NodeStatus.OPEN
+        current = current.parent
 
 @dataclass
 class PoetryConfig:
@@ -441,12 +457,15 @@ def recursive_bfs(root: ProofNode, level: int, config: PoetryConfig,
                         continue  # Will check root.status next iteration
                 else:
                     # Recursion failed
+                    # paper's HP→OPEN backtrack (Fig. 2(c), Appendix A.1)
                     sorry_edge.sub_goal_status = SorryStatus.FAILED
                     if config.verbose:
-                        print(f"[LEVEL {level}] Sub-goal FAILED. Backpropagating...")
+                        print(f"[LEVEL {level}] Sub-goal FAILED. HP→OPEN and continue search at current level.")
+
                     
-                    # Backpropagate: invalidate this sketch, continue searching
-                    sorry_edge.child_node.status = NodeStatus.OPEN
+                    # Convert the entire paused HP path back to OPEN,
+                    # then update statuses upward and continue level-`level` BFS.
+                    _hp_path_to_open(sorry_edge.child_node)
                     propagate_status_upward(sorry_edge.child_node)
                     continue
         
