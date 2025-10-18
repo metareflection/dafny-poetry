@@ -10,7 +10,7 @@ Implements the full POETRY algorithm from the paper:
 
 import pathlib
 import time
-from typing import Tuple, List
+from typing import Tuple, List, Optional, Callable
 from dataclasses import dataclass
 import re
 
@@ -40,6 +40,7 @@ class PoetryConfig:
     llm_tries: int = 2
     out_dir: pathlib.Path = pathlib.Path("poetry_out")
     verbose: bool = False
+    oracle: Optional[Callable[[str], list[str]]] = None
 
 
 def _read(p: pathlib.Path) -> str:
@@ -104,7 +105,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
     
     Actions tried:
     1. For top-level method body: sketching (either symbolic induction sketch or LLM-based sketch)
-    2. 2. LLM refinement as a single‑admit patch (multiple samples if enabled)
+    2. Refinement as a single‑admit patch (multiple samples if enabled): Oracle and/or LLM
     """
     children = []
     
@@ -175,8 +176,49 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                     print(f"    [sketch] failed: {e}")
     else:
         if config.verbose: print(f"    [non-top-level] method={method}")
-    
-    # Action 2: Try LLM refinement as a single‑admit patch (multiple samples)
+ 
+     # Action 2.1: Oracle refinement as a single‑admit patch (multiple samples)
+    if config.oracle:
+        src_text = _read(node.file_path)
+        errors = ""
+        # Build precise local context around the focused admit
+        admit_ctx = _build_admit_context(node.file_path, ctx)
+
+        
+        src_prompt = src_text.replace(admit_ctx["target_line_text"], "/*[CODE HERE]*/")
+        guesses = list(set(config.oracle(src_prompt)))
+        for sample_idx, patch_text in enumerate(guesses):
+            try:
+                if patch_text and patch_text.strip():
+                    # Apply a *surgical* patch: replace only the target Admit line
+                    patched_src = _apply_admit_patch(src_text, admit_ctx["target_line"], patch_text)
+                    cand = write_version(
+                        config.out_dir, node.file_path, f"oracle_patch_{node.depth}_{sample_idx}", patched_src
+                    )
+
+                    # Verify candidate
+                    _ = run_sketcher(cand, "errors_warnings", method=None, timeout=60)  # parse/typecheck gate
+                    cand_patched = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
+                    admits_after = count_admits(cand_patched)
+
+                    if admits_after < node.admits:
+                        score_delta = float(node.admits - admits_after) + 0.5  # small bonus for eliminating the focus
+                        child = ProofNode(
+                            file_path=cand_patched,
+                            admits=admits_after,
+                            parent=node,
+                            action_taken=f"oracle_patch_{sample_idx}",
+                            score=node.score + score_delta,
+                            depth=node.depth
+                        )
+                        children.append(child)
+                        if config.verbose:
+                            print(f"    [oracle_patch_{sample_idx}] → {admits_after} admits (was {node.admits})")
+            except Exception as e:
+                if config.verbose:
+                    print(f"    [oracle_{sample_idx}] failed: {e}")
+  
+    # Action 2.2: LLM refinement as a single‑admit patch (multiple samples)
     if config.use_llm:
         src_text = _read(node.file_path)
         errors = ""

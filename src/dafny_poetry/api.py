@@ -7,7 +7,7 @@ This module provides a programmatic interface for benchmarking and automation.
 import pathlib
 import tempfile
 import shutil
-from typing import Optional, Dict, Any
+from typing import Optional, Callable
 from dataclasses import dataclass
 
 from .poetry_recursive import run_poetry, PoetryConfig
@@ -32,7 +32,8 @@ def verify_dafny(
     llm_tries: int = 2,
     timeout: int = 600,
     verbose: bool = False,
-    out_dir: Optional[pathlib.Path] = None
+    out_dir: Optional[pathlib.Path] = None,
+    oracle: Optional[Callable[[str], list[str]]] = None
 ) -> PoetryResult:
     """
     Attempt to verify a Dafny program using POETRY.
@@ -80,7 +81,8 @@ def verify_dafny(
             use_llm=use_llm,
             llm_tries=llm_tries,
             out_dir=out_dir,
-            verbose=verbose
+            verbose=verbose,
+            oracle=oracle
         )
 
         # Run POETRY
