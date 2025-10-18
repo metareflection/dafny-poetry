@@ -451,8 +451,10 @@ def recursive_bfs(root: ProofNode, level: int, config: PoetryConfig,
                     )
                     
                     if all_proved:
-                        # Complete proof!
+                        # Complete proof! Transfer the proved file from sub-goal
                         sorry_edge.child_node.status = NodeStatus.PROVED
+                        sorry_edge.child_node.file_path = sub_proof.file_path
+                        sorry_edge.child_node.admits = sub_proof.admits
                         propagate_status_upward(sorry_edge.child_node)
                         if config.verbose:
                             print(f"[LEVEL {level}] All sub-goals proved! Complete proof found.")
