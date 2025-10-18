@@ -219,7 +219,6 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                     admits_after = count_admits(cand_patched)
 
                     if admits_after < node.admits:
-                        oracle_ok = True
                         score_delta = float(node.admits - admits_after) + 0.5  # small bonus for eliminating the focus
                         child = ProofNode(
                             file_path=cand_patched,
@@ -232,6 +231,8 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                         children.append(child)
                         if config.verbose:
                             print(f"    [oracle_patch_{sample_idx}] → {admits_after} admits (was {node.admits})")
+                        oracle_ok = True
+                        break
             except Exception as e:
                 if config.verbose:
                     print(f"    [oracle_{sample_idx}] failed: {e}")
