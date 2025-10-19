@@ -218,8 +218,9 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                     cand_patched = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
                     admits_after = count_admits(cand_patched)
 
-                    if admits_after < node.admits:
-                        score_delta = float(node.admits - admits_after) + 0.5  # small bonus for eliminating the focus
+                    if admits_after <= node.admits:
+                        # small bonus for eliminating the focus
+                        score_delta = float(node.admits - admits_after) + 0.5 if admits_after < node.admits else -0.5
                         child = ProofNode(
                             file_path=cand_patched,
                             admits=admits_after,
