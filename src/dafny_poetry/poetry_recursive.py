@@ -206,7 +206,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
         guesses = list(set(config.oracle(src_prompt)))
         for sample_idx, patch_text in enumerate(guesses):
             try:
-                if patch_text and patch_text.strip():
+                if patch_text and patch_text.strip() and "Admit" not in patch_text:
                     # Apply a *surgical* patch: replace only the target Admit line
                     patched_src = _apply_admit_patch(src_text, admit_ctx["target_line"], patch_text)
                     cand = write_version(
