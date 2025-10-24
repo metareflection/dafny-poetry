@@ -133,4 +133,4 @@ See implementation notes in [`POETRY_IMPLEMENTATION.md`](POETRY_IMPLEMENTATION.m
 [poetry]: https://neurips.cc/virtual/2024/poster/93034
 [dafny-admitter]: https://github.com/metareflection/dafny-admitter
 [dafny-sketcher-cli]: https://github.com/namin/dafny-sketcher/blob/main/cli/AGENTS.md
-[dafny-annotator](https://github.com/metareflection/dafny-annotator)
+[dafny-annotator]: https://github.com/metareflection/dafny-annotator
