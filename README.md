@@ -1,6 +1,6 @@
 # dafny-poetry
 
-**Full implementation** of the [POETRY][poetry] algorithm (NeurIPS 2024) for Dafny.
+Implementation of the [POETRY][poetry] algorithm (NeurIPS 2024) for Dafny.
 
 POETRY proves theorems recursively using:
 - **Verifiable proof sketches** with `Admit(...)` placeholders
@@ -12,6 +12,7 @@ POETRY proves theorems recursively using:
 
 - [`dafny-admitter`][dafny-admitter] – creates verifiable sketches with `Admit("…", φ)` obligations
 - [`dafny-sketcher-cli`][dafny-sketcher-cli] – symbolic reasoning (induction search, errors)
+- [`dafny-annotator`](dafny-annotor) - oracle training (assertions, helper lemma calls)
 
 ## Install
 
@@ -22,7 +23,7 @@ pip install -e .
 ## Quick Start
 
 ```bash
-# Full POETRY with LLM (requires LLM setup - see below)
+# POETRY with LLM (requires LLM setup - see below)
 dafny-poetry --file examples/example.dfy --use-llm -v
 
 # Symbolic only (no LLM required)
