@@ -12,7 +12,7 @@ POETRY proves theorems recursively using:
 
 - [`dafny-admitter`][dafny-admitter] – creates verifiable sketches with `Admit("…", φ)` obligations
 - [`dafny-sketcher-cli`][dafny-sketcher-cli] – symbolic reasoning (induction search, errors)
-- [`dafny-annotator`](dafny-annotor) - oracle training (assertions, helper lemma calls)
+- [`dafny-annotator`][dafny-annotator] - oracle training (assertions, helper lemma calls)
 
 ## Install
 
@@ -133,3 +133,4 @@ See implementation notes in [`POETRY_IMPLEMENTATION.md`](POETRY_IMPLEMENTATION.m
 [poetry]: https://neurips.cc/virtual/2024/poster/93034
 [dafny-admitter]: https://github.com/metareflection/dafny-admitter
 [dafny-sketcher-cli]: https://github.com/namin/dafny-sketcher/blob/main/cli/AGENTS.md
+[dafny-annotator](https://github.com/metareflection/dafny-annotator)
