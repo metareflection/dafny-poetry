@@ -161,7 +161,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                     replaced = replace_method_body(src_text, method, sk_body.strip())
                     cand = write_version(config.out_dir, node.file_path, f"sketch_{node.depth}", replaced)
                     # Verify the candidate and apply the same admit gate
-                    cand_after = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
+                    cand_after = run_dafny_admitter(cand, mode="admit", timeout=180)
                     admits_after = count_admits(cand_after)
                     # Must compile
                     try:
@@ -215,7 +215,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
 
                     # Verify candidate
                     _ = run_sketcher(cand, "errors_warnings", method=None, timeout=60)  # parse/typecheck gate
-                    cand_patched = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
+                    cand_patched = run_dafny_admitter(cand, mode="admit", timeout=180)
                     admits_after = count_admits(cand_patched)
 
                     if admits_after <= node.admits:
@@ -267,7 +267,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
 
                     # Verify candidate
                     _ = run_sketcher(cand, "errors_warnings", method=None, timeout=60)  # parse/typecheck gate
-                    cand_patched = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
+                    cand_patched = run_dafny_admitter(cand, mode="admit", timeout=180)
                     admits_after = count_admits(cand_patched)
 
                     if admits_after < node.admits:
@@ -545,7 +545,7 @@ def run_poetry(src_path: pathlib.Path, config: PoetryConfig) -> Tuple[int, pathl
     if config.verbose:
         print(f"[POETRY] Creating initial sketch from {src_path}")
     
-    patched = run_dafny_admitter(src_path, mode="admit", only_failing=True, 
+    patched = run_dafny_admitter(src_path, mode="admit", 
                                 timeout=min(config.global_timeout, 300))
     initial_admits = count_admits(patched)
     

@@ -18,7 +18,7 @@ def _read(p: pathlib.Path) -> str:
 def run_poetry(src_path: pathlib.Path, args) -> Tuple[int, pathlib.Path]:
     start = time.time()
     # 0) seed: run admitter to get verifiable sketch
-    patched = run_dafny_admitter(src_path, mode="admit", only_failing=True, timeout=min(args.global_timeout, 300))
+    patched = run_dafny_admitter(src_path, mode="admit", timeout=min(args.global_timeout, 300))
     base_admits = count_admits(patched)
     curr = State(path=patched, admits=base_admits, label="seed")
     best_path = patched
@@ -45,7 +45,7 @@ def run_poetry(src_path: pathlib.Path, args) -> Tuple[int, pathlib.Path]:
         # 1) ACTION: Induction search via sketcher (symbolic)
         before_txt = _read(curr.path)
         out1 = run_sketcher(curr.path, "induction_search", method=method, timeout=120)
-        after1 = run_dafny_admitter(curr.path, mode="admit", only_failing=True, timeout=180)
+        after1 = run_dafny_admitter(curr.path, mode="admit", timeout=180)
         a1 = count_admits(after1)
         if args.verbose:
             print(f"  [induction_search] admits: {a1} (was {curr.admits})")
@@ -79,7 +79,7 @@ def run_poetry(src_path: pathlib.Path, args) -> Tuple[int, pathlib.Path]:
                     # Write candidate and re-admit
                     cand = write_version(args.out_dir, curr.path, f"llm_{depth}", replaced)
                     _ = run_sketcher(cand, "errors_warnings", method=None, timeout=60)  # benign check
-                    cand2 = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
+                    cand2 = run_dafny_admitter(cand, mode="admit", timeout=180)
                     a2 = count_admits(cand2)
                     if args.verbose:
                         print(f"  [llm_refine] admits: {a2} (was {curr.admits})")
@@ -105,7 +105,7 @@ def run_poetry(src_path: pathlib.Path, args) -> Tuple[int, pathlib.Path]:
         new_text = re.sub(r'(?<!lemma\s\{:ghost\}\s)Admit\s*\("', '// Admit("', text, count=1)
         if new_text != text:
             cand = write_version(args.out_dir, curr.path, f"shift_{depth}", new_text)
-            cand2 = run_dafny_admitter(cand, mode="admit", only_failing=True, timeout=180)
+            cand2 = run_dafny_admitter(cand, mode="admit", timeout=180)
             a3 = count_admits(cand2)
             if args.verbose:
                 print(f"  [shift-focus] admits: {a3} (was {curr.admits})")

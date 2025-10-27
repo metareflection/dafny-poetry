@@ -9,11 +9,9 @@ def _run(cmd: list, cwd=None, check=True, capture_output=True, text=True, timeou
         raise RuntimeError(f"Command failed: {' '.join(cmd)}\nstdout:\n{p.stdout}\nstderr:\n{p.stderr}")
     return p
 
-def run_dafny_admitter(dfy_path: pathlib.Path, mode: str="admit", only_failing: bool=True, timeout: Optional[int]=None) -> pathlib.Path:
+def run_dafny_admitter(dfy_path: pathlib.Path, mode: str="admit", timeout: Optional[int]=None) -> pathlib.Path:
     """Return path to patched .dfy (same folder with .patched.dfy suffix)."""
     cmd = ["dafny-admitter", str(dfy_path), "--mode", mode]
-    if not only_failing:
-        cmd.append("--no-only-failing")
     if timeout is not None:
         cmd.extend(["--timeout", str(timeout)])
     out = _run(cmd, timeout=timeout, check=False)
