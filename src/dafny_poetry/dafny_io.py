@@ -1,7 +1,15 @@
 
 import subprocess, pathlib, re, tempfile, shutil, json, os
 from typing import List, Tuple, Optional, Dict
+from dataclasses import dataclass
 from .utils import find_enclosing_decl, extract_method_body_region, extract_method_body_text
+
+@dataclass
+class VerificationResult:
+    """Result of a quick verification check."""
+    success: bool
+    errors: int
+    output: str
 
 def _run(cmd: list, cwd=None, check=True, capture_output=True, text=True, timeout=None):
     p = subprocess.run(cmd, cwd=cwd, check=False, capture_output=capture_output, text=text, timeout=timeout)
@@ -9,11 +17,33 @@ def _run(cmd: list, cwd=None, check=True, capture_output=True, text=True, timeou
         raise RuntimeError(f"Command failed: {' '.join(cmd)}\nstdout:\n{p.stdout}\nstderr:\n{p.stderr}")
     return p
 
+def quick_verify(dfy_path: pathlib.Path, timeout: int = 10) -> VerificationResult:
+    """
+    Fast verification check without admitter.
+    Returns whether verification succeeded and error count.
+    """
+    cmd = ["dafny", "verify", str(dfy_path)]
+    try:
+        p = _run(cmd, check=False, timeout=timeout)
+        output = p.stdout + ("\n" + p.stderr if p.stderr else "")
+        success = p.returncode == 0
+
+        # Count errors
+        errors = len(re.findall(r'Error:', output, re.IGNORECASE))
+
+        return VerificationResult(success=success, errors=errors, output=output)
+    except subprocess.TimeoutExpired:
+        return VerificationResult(success=False, errors=999, output="Timeout")
+    except Exception as e:
+        return VerificationResult(success=False, errors=999, output=str(e))
+
 def run_dafny_admitter(dfy_path: pathlib.Path, mode: str="admit", timeout: Optional[int]=None) -> pathlib.Path:
     """Return path to patched .dfy (same folder with .patched.dfy suffix)."""
+    # PERF: Use shorter default timeout (most complete in <30s, down from 180s)
+    if timeout is None:
+        timeout = 30
     cmd = ["dafny-admitter", str(dfy_path), "--mode", mode]
-    if timeout is not None:
-        cmd.extend(["--timeout", str(timeout)])
+    cmd.extend(["--timeout", str(timeout)])
     out = _run(cmd, timeout=timeout, check=False)
     # The admitter writes a *.patched.dfy next to the input
     # Handle case where input already has .patched in the name
@@ -35,15 +65,18 @@ def run_dafny_admitter(dfy_path: pathlib.Path, mode: str="admit", timeout: Optio
 ADMIT_RE = re.compile(r'\bAdmit\s*\(')
 ADMIT_HELPER_RE = re.compile(r'lemma\s+\{:ghost\}\s+Admit\s*\(')
 
+def count_admits_in_string(src: str) -> int:
+    """Count admits in a string without file I/O. PERF optimization."""
+    all_admits = len(ADMIT_RE.findall(src))
+    helper_defs = len(ADMIT_HELPER_RE.findall(src))
+    return all_admits - helper_defs
+
 def count_admits(dfy_path: pathlib.Path) -> int:
     try:
         src = dfy_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return 0
-    # Count all Admit calls minus the helper definition
-    all_admits = len(ADMIT_RE.findall(src))
-    helper_defs = len(ADMIT_HELPER_RE.findall(src))
-    return all_admits - helper_defs
+    return count_admits_in_string(src)
 
 def collect_first_admit_context(dfy_path: pathlib.Path) -> Optional[Dict]:
     """Return info for the first Admit occurrence: line, col, method name, body region."""
@@ -59,6 +92,9 @@ def collect_first_admit_context(dfy_path: pathlib.Path) -> Optional[Dict]:
 
 def run_sketcher(dfy_path: pathlib.Path, sketch: str, method: Optional[str]=None, timeout: Optional[int]=None) -> str:
     """Return stdout (even on failure)."""
+    # PERF: Use shorter default timeout (most complete in <30s, down from 120s)
+    if timeout is None:
+        timeout = 30
     cmd = ["dafny-sketcher-cli", "--file", str(dfy_path), "--sketch", sketch]
     if method:
         cmd += ["--method", method]

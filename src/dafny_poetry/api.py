@@ -27,6 +27,7 @@ class PoetryResult:
 def verify_dafny(
     dfy_source: str,
     max_depth: int = 3,
+    max_branches: int = 2,
     use_sketcher: bool = True,
     use_llm: bool = True,
     llm_tries: int = 2,
@@ -41,11 +42,14 @@ def verify_dafny(
     Args:
         dfy_source: Dafny source code as a string
         max_depth: Maximum POETRY loop depth (default: 3)
+        max_branches: Maximum candidates per expansion (LLM and Oracle) (default: 2)
+        use_sketcher: Whether to use symbolic sketcher (default: True)
         use_llm: Whether to use LLM for proof repair (default: True)
         llm_tries: Number of LLM attempts per iteration (default: 2)
         timeout: Global timeout in seconds (default: 600)
         verbose: Print progress messages (default: False)
         out_dir: Output directory for intermediate files (default: temp dir)
+        oracle: Optional oracle function for generating proof candidates
 
     Returns:
         PoetryResult with success status, final file, and statistics
@@ -74,7 +78,7 @@ def verify_dafny(
         # Create config object
         config = PoetryConfig(
             max_depth=max_depth,
-            max_branches=2,  # Default
+            max_branches=max_branches,
             global_timeout=timeout,
             local_timeout=120,  # Default
             use_sketcher=use_sketcher,

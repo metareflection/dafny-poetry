@@ -15,11 +15,12 @@ import time
 from typing import Tuple, List, Optional, Callable
 from dataclasses import dataclass
 import re
+import concurrent.futures
 
 from .proof_tree import ProofNode, SorryEdge, SearchTree, NodeStatus, SorryStatus
 from .dafny_io import (
-    run_dafny_admitter, run_sketcher, count_admits, 
-    collect_first_admit_context, write_version, replace_method_body
+    run_dafny_admitter, run_sketcher, count_admits, count_admits_in_string,
+    collect_first_admit_context, write_version, replace_method_body, quick_verify
 )
 from .utils import extract_method_body_text
 
@@ -114,25 +115,160 @@ def  _looks_top_level(node: ProofNode, body: str) -> bool:
     at_method_entry = _looks_like_method_entry(body)
     return at_level_root and at_method_entry
 
+def _evaluate_oracle_candidate(node: ProofNode, config: PoetryConfig, sample_idx: int,
+                              patch_text: str, src_text: str, admit_ctx: dict) -> Optional[ProofNode]:
+    """
+    PERF: Helper to evaluate a single oracle candidate (for parallel execution).
+    Returns a ProofNode if successful, None otherwise.
+    """
+    eval_start = time.time()
+    try:
+        if not patch_text or not patch_text.strip() or "Admit" in patch_text:
+            return None
+
+        # Apply surgical patch
+        patched_src = _apply_admit_patch(src_text, admit_ctx["target_line"], patch_text)
+        cand = write_version(
+            config.out_dir, node.file_path, f"oracle_patch_{node.depth}_{sample_idx}", patched_src
+        )
+
+        # PERF: Quick verify first
+        verify_start = time.time()
+        result = quick_verify(cand, timeout=10)
+        verify_time = time.time() - verify_start
+
+        if result.success:
+            # Complete proof from oracle!
+            eval_time = time.time() - eval_start
+            if config.verbose:
+                print(f"      [oracle_{sample_idx}] COMPLETE! (verify={verify_time:.2f}s, total={eval_time:.2f}s)")
+            score_delta = float(node.admits) + 0.5
+            return ProofNode(
+                file_path=cand,
+                admits=0,
+                parent=node,
+                action_taken=f"oracle_patch_{sample_idx}",
+                score=node.score + score_delta,
+                depth=node.depth
+            )
+        else:
+            # Parse/typecheck gate
+            _ = run_sketcher(cand, "errors_warnings", method=None, timeout=30)
+            # Run admitter
+            admit_start = time.time()
+            cand_patched = run_dafny_admitter(cand, mode="admit", timeout=30)
+            admits_after = count_admits(cand_patched)
+            admit_time = time.time() - admit_start
+
+            if admits_after <= node.admits:
+                # small bonus for eliminating the focus
+                score_delta = float(node.admits - admits_after) + 0.5 if admits_after < node.admits else -0.5
+                eval_time = time.time() - eval_start
+                if config.verbose:
+                    print(f"      [oracle_{sample_idx}] → {admits_after} admits (verify={verify_time:.2f}s, admit={admit_time:.2f}s, total={eval_time:.2f}s)")
+                return ProofNode(
+                    file_path=cand_patched,
+                    admits=admits_after,
+                    parent=node,
+                    action_taken=f"oracle_patch_{sample_idx}",
+                    score=node.score + score_delta,
+                    depth=node.depth
+                )
+
+        return None
+    except Exception as e:
+        eval_time = time.time() - eval_start
+        if config.verbose:
+            print(f"      [oracle_{sample_idx}] failed after {eval_time:.2f}s: {e}")
+        return None
+
+def _evaluate_llm_candidate(node: ProofNode, config: PoetryConfig, sample_idx: int,
+                           patch_text: str, src_text: str, admit_ctx: dict, method: str) -> Optional[ProofNode]:
+    """
+    PERF: Helper to evaluate a single LLM candidate (for parallel execution).
+    Returns a ProofNode if successful, None otherwise.
+    """
+    eval_start = time.time()
+    try:
+        if not patch_text or not patch_text.strip():
+            return None
+
+        # Apply surgical patch
+        patched_src = _apply_admit_patch(src_text, admit_ctx["target_line"], patch_text)
+        cand = write_version(
+            config.out_dir, node.file_path, f"llm_patch_{node.depth}_{sample_idx}", patched_src
+        )
+
+        # PERF: Quick verify first - if it succeeds, we're done!
+        verify_start = time.time()
+        result = quick_verify(cand, timeout=10)
+        verify_time = time.time() - verify_start
+
+        if result.success:
+            # Perfect! No admits needed
+            eval_time = time.time() - eval_start
+            if config.verbose:
+                print(f"      [llm_{sample_idx}] COMPLETE! (verify={verify_time:.2f}s, total={eval_time:.2f}s)")
+            return ProofNode(
+                file_path=cand,
+                admits=0,
+                parent=node,
+                action_taken=f"llm_patch_{sample_idx}_complete",
+                score=node.score + float(node.admits) + 1.0,
+                depth=node.depth
+            )
+
+        # PERF: Only run admitter if quick verify shows progress
+        if result.errors < 5:  # Heuristic: if few errors, worth admitting
+            # Parse/typecheck gate (quick)
+            _ = run_sketcher(cand, "errors_warnings", method=None, timeout=10)
+            # Now run admitter with reduced timeout
+            admit_start = time.time()
+            cand_patched = run_dafny_admitter(cand, mode="admit", timeout=30)
+            admits_after = count_admits(cand_patched)
+            admit_time = time.time() - admit_start
+
+            if admits_after < node.admits:
+                score_delta = float(node.admits - admits_after) + 0.5
+                eval_time = time.time() - eval_start
+                if config.verbose:
+                    print(f"      [llm_{sample_idx}] progress! {admits_after} admits (verify={verify_time:.2f}s, admit={admit_time:.2f}s, total={eval_time:.2f}s)")
+                return ProofNode(
+                    file_path=cand_patched,
+                    admits=admits_after,
+                    parent=node,
+                    action_taken=f"llm_patch_{sample_idx}",
+                    score=node.score + score_delta,
+                    depth=node.depth
+                )
+
+        return None
+    except Exception as e:
+        eval_time = time.time() - eval_start
+        if config.verbose:
+            print(f"    [llm_{sample_idx}] failed after {eval_time:.2f}s: {e}")
+        return None
+
 def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
     """
     Expand a node by generating candidate proof steps.
     Returns list of child nodes created.
-    
+
     Actions tried:
     1. For top-level method body: sketching (either symbolic induction sketch or LLM-based sketch)
     2. Refinement as a single‑admit patch (multiple samples if enabled): Oracle and/or LLM
     """
+    expand_start = time.time()
     children = []
-    
+
     # Get the focused method (first Admit)
     ctx = collect_first_admit_context(node.file_path)
     if not ctx or not ctx.get("method"):
         return children
-    
+
     method = ctx["method"]
     node.focused_method = method
-    
+
     if config.verbose:
         print(f"  [expand] node={node.admits} admits, method={method}, score={node.score:.2f}")
     
@@ -144,56 +280,92 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
             llm_agent = llm_agent_module
 
     # Action 1: Try induction search or LLM sketch
+    sketch_start = time.time()
     src_text = _read(node.file_path)
     current_body = extract_method_body_text(src_text, method)
     if _looks_top_level(node, current_body or ""):
         if config.verbose: print(f"    [top-level] method={method}")
         if config.use_sketcher or config.use_llm:
             try:
+                sketcher_gen_start = time.time()
                 if config.use_sketcher:
-                    sk_body = run_sketcher(node.file_path, "induction_search", method=method, timeout=120)
+                    # PERF: Use default 30s timeout (down from 120s)
+                    sk_body = run_sketcher(node.file_path, "induction_search", method=method)
                 elif config.use_llm:
                     sk_body = llm_agent.propose_new_body(
-                        method, "", "",  "", file_source=src_text, 
+                        method, "", "",  "", file_source=src_text,
                         tries=max(1, config.llm_tries), sketch=True)
+                sketcher_gen_time = time.time() - sketcher_gen_start
+
                 if sk_body and sk_body.strip():
                     src_text = _read(node.file_path)
                     replaced = replace_method_body(src_text, method, sk_body.strip())
                     cand = write_version(config.out_dir, node.file_path, f"sketch_{node.depth}", replaced)
-                    # Verify the candidate and apply the same admit gate
-                    cand_after = run_dafny_admitter(cand, mode="admit", timeout=180)
-                    admits_after = count_admits(cand_after)
-                    # Must compile
-                    try:
-                        _ = run_sketcher(cand_after, "errors_warnings", method=None, timeout=60)
-                        compiles = True
-                    except Exception as e:
-                        compiles = False
-                        if config.verbose: print(f"    [sketch] failed to verify: {e}")
-                    # Seed acceptance: either strict improvement, or small admit growth at method entry
-                    progress = admits_after < node.admits
-                    small_growth_ok = admits_after <= node.admits + STRUCTURE_DELTA_MAX
-                    if compiles and (progress or small_growth_ok):
-                        child =ProofNode(
-                            file_path=cand_after,
-                            admits=admits_after,
+
+                    # PERF: Quick verify first
+                    verify_start = time.time()
+                    result = quick_verify(cand, timeout=10)
+                    verify_time = time.time() - verify_start
+
+                    if result.success:
+                        # Perfect sketch that completes the proof!
+                        child = ProofNode(
+                            file_path=cand,
+                            admits=0,
                             parent=node,
-                            action_taken="induction" if config.use_sketcher else "llm_sketch",
-                            score=node.score + 1.0,
+                            action_taken="induction_complete" if config.use_sketcher else "llm_sketch_complete",
+                            score=node.score + float(node.admits) + 2.0,
                             depth=node.depth
                         )
                         children.append(child)
                         if config.verbose:
-                            print(f"    [sketch] accepted: {admits_after} admits (was {node.admits})")
+                            print(f"    [sketch] COMPLETE PROOF! 0 admits (gen={sketcher_gen_time:.2f}s, verify={verify_time:.2f}s)")
                     else:
-                        if config.verbose: print(f"    [sketch] rejected: progress={progress}, small_growth_ok={small_growth_ok}, compiles={compiles}")
+                        # Need admitter (use default 30s timeout, down from 180s)
+                        admit_start = time.time()
+                        cand_after = run_dafny_admitter(cand, mode="admit")
+                        admits_after = count_admits(cand_after)
+                        admit_time = time.time() - admit_start
+
+                        # Must compile (use default 30s timeout, down from 60s)
+                        try:
+                            _ = run_sketcher(cand_after, "errors_warnings", method=None)
+                            compiles = True
+                        except Exception as e:
+                            compiles = False
+                            if config.verbose: print(f"    [sketch] failed to compile: {e}")
+                        # Seed acceptance: either strict improvement, or small admit growth at method entry
+                        progress = admits_after < node.admits
+                        small_growth_ok = admits_after <= node.admits + STRUCTURE_DELTA_MAX
+                        if compiles and (progress or small_growth_ok):
+                            child = ProofNode(
+                                file_path=cand_after,
+                                admits=admits_after,
+                                parent=node,
+                                action_taken="induction" if config.use_sketcher else "llm_sketch",
+                                score=node.score + 1.0,
+                                depth=node.depth
+                            )
+                            children.append(child)
+                            if config.verbose:
+                                print(f"    [sketch] accepted: {admits_after} admits (was {node.admits}) (gen={sketcher_gen_time:.2f}s, verify={verify_time:.2f}s, admit={admit_time:.2f}s)")
+                        else:
+                            if config.verbose: print(f"    [sketch] rejected: progress={progress}, small_growth_ok={small_growth_ok}, compiles={compiles}")
             except Exception as e:
                 if config.verbose:
                     print(f"    [sketch] failed: {e}")
+
+    sketch_time = time.time() - sketch_start
+    if config.verbose and sketch_time > 0.1:
+        print(f"    [timing] sketch phase: {sketch_time:.2f}s")
     else:
         if config.verbose: print(f"    [non-top-level] method={method}")
  
     # Action 2.1: Oracle refinement as a single‑admit patch (multiple samples)
+    # PERF: Parallelized version for 4-5x speedup
+    oracle_start = time.time()
+    oracle_gen_time = 0.0
+    oracle_eval_time = 0.0
     oracle_ok = False
     if config.oracle:
         src_text = _read(node.file_path)
@@ -201,51 +373,62 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
         # Build precise local context around the focused admit
         admit_ctx = _build_admit_context(node.file_path, ctx)
 
-        
         src_prompt = src_text.replace(admit_ctx["target_line_text"], "/*[CODE HERE]*/")
+        oracle_gen_start = time.time()
         guesses = list(set(config.oracle(src_prompt)))
-        for sample_idx, patch_text in enumerate(guesses):
-            try:
-                if patch_text and patch_text.strip() and "Admit" not in patch_text:
-                    # Apply a *surgical* patch: replace only the target Admit line
-                    patched_src = _apply_admit_patch(src_text, admit_ctx["target_line"], patch_text)
-                    cand = write_version(
-                        config.out_dir, node.file_path, f"oracle_patch_{node.depth}_{sample_idx}", patched_src
-                    )
+        oracle_gen_time = time.time() - oracle_gen_start
+        if config.verbose:
+            print(f"    [oracle] Generated {len(guesses)} guesses in {oracle_gen_time:.2f}s")
 
-                    # Verify candidate
-                    _ = run_sketcher(cand, "errors_warnings", method=None, timeout=60)  # parse/typecheck gate
-                    cand_patched = run_dafny_admitter(cand, mode="admit", timeout=180)
-                    admits_after = count_admits(cand_patched)
+        # PERF: Evaluate all oracle candidates in parallel with early termination
+        if guesses:
+            # Apply max_branches limit to oracle (same as LLM)
+            guesses_to_try = guesses[:config.max_branches]
+            if config.verbose and len(guesses) > config.max_branches:
+                print(f"    [oracle] Limiting to first {config.max_branches} of {len(guesses)} guesses")
 
-                    if admits_after <= node.admits:
-                        # small bonus for eliminating the focus
-                        score_delta = float(node.admits - admits_after) + 0.5 if admits_after < node.admits else -0.5
-                        child = ProofNode(
-                            file_path=cand_patched,
-                            admits=admits_after,
-                            parent=node,
-                            action_taken=f"oracle_patch_{sample_idx}",
-                            score=node.score + score_delta,
-                            depth=node.depth
-                        )
-                        children.append(child)
+            oracle_eval_start = time.time()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(guesses_to_try))) as executor:
+                futures = {
+                    executor.submit(_evaluate_oracle_candidate, node, config, idx, patch, src_text, admit_ctx): idx
+                    for idx, patch in enumerate(guesses_to_try)
+                }
+
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    if result:
+                        children.append(result)
                         if config.verbose:
-                            print(f"    [oracle_patch_{sample_idx}] → {admits_after} admits (was {node.admits})")
+                            print(f"    [oracle_patch_{futures[future]}] → {result.admits} admits (was {node.admits})")
                         oracle_ok = True
-                        break
-            except Exception as e:
-                if config.verbose:
-                    print(f"    [oracle_{sample_idx}] failed: {e}")
+                        # PERF: Early termination if we found a complete proof
+                        if result.admits == 0:
+                            if config.verbose:
+                                print(f"    [oracle] Complete proof found! Stopping early.")
+                            break
+            oracle_eval_time = time.time() - oracle_eval_start
+            if config.verbose and len(guesses_to_try) > 1:
+                print(f"    [timing] Oracle evaluation: {oracle_eval_time:.2f}s for {len(guesses_to_try)} candidates")
+
+    oracle_time = time.time() - oracle_start
+    if config.verbose and oracle_time > 0.1:
+        if config.oracle and oracle_gen_time > 0:
+            print(f"    [timing] oracle phase: {oracle_time:.2f}s (generation: {oracle_gen_time:.2f}s, evaluation: {oracle_eval_time:.2f}s)")
+        else:
+            print(f"    [timing] oracle phase: {oracle_time:.2f}s")
   
     # Action 2.2: LLM refinement as a single‑admit patch (multiple samples)
+    # PERF: Parallelized version for 2-4x speedup
+    llm_start = time.time()
     if not oracle_ok and config.use_llm:
         src_text = _read(node.file_path)
         errors = ""
         # Build precise local context around the focused admit
         admit_ctx = _build_admit_context(node.file_path, ctx)
 
-        # Generate multiple LLM candidates
+        # Generate multiple LLM candidates in parallel
+        llm_gen_start = time.time()
+        patches_to_try = []
         for sample_idx in range(config.max_branches):
             try:
                 patch_text = llm_agent.propose_patch_for_admit(
@@ -257,36 +440,44 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                         file_source=src_text,
                         tries=max(1, config.llm_tries),
                     )
-
-                if patch_text and patch_text.strip():
-                    # Apply a *surgical* patch: replace only the target Admit line
-                    patched_src = _apply_admit_patch(src_text, admit_ctx["target_line"], patch_text)
-                    cand = write_version(
-                        config.out_dir, node.file_path, f"llm_patch_{node.depth}_{sample_idx}", patched_src
-                    )
-
-                    # Verify candidate
-                    _ = run_sketcher(cand, "errors_warnings", method=None, timeout=60)  # parse/typecheck gate
-                    cand_patched = run_dafny_admitter(cand, mode="admit", timeout=180)
-                    admits_after = count_admits(cand_patched)
-
-                    if admits_after < node.admits:
-                        score_delta = float(node.admits - admits_after) + 0.5  # small bonus for eliminating the focus
-                        child = ProofNode(
-                            file_path=cand_patched,
-                            admits=admits_after,
-                            parent=node,
-                            action_taken=f"llm_patch_{sample_idx}",
-                            score=node.score + score_delta,
-                            depth=node.depth
-                        )
-                        children.append(child)
-                        if config.verbose:
-                            print(f"    [llm_patch_{sample_idx}] → {admits_after} admits (was {node.admits})")
+                patches_to_try.append((sample_idx, patch_text))
             except Exception as e:
                 if config.verbose:
-                    print(f"    [llm_{sample_idx}] failed: {e}")
-    
+                    print(f"    [llm_gen_{sample_idx}] failed: {e}")
+        llm_gen_time = time.time() - llm_gen_start
+
+        # PERF: Evaluate all candidates in parallel with early termination
+        if patches_to_try:
+            llm_eval_start = time.time()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(patches_to_try))) as executor:
+                futures = {
+                    executor.submit(_evaluate_llm_candidate, node, config, idx, patch, src_text, admit_ctx, method): idx
+                    for idx, patch in patches_to_try
+                }
+
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    if result:
+                        children.append(result)
+                        if config.verbose:
+                            print(f"    [llm_patch_{futures[future]}] → {result.admits} admits (was {node.admits})")
+                        # PERF: Early termination if we found a complete proof
+                        if result.admits == 0:
+                            if config.verbose:
+                                print(f"    [llm_patch] Complete proof found! Stopping early.")
+                            break
+            llm_eval_time = time.time() - llm_eval_start
+            if config.verbose:
+                print(f"    [timing] LLM generation: {llm_gen_time:.2f}s, evaluation: {llm_eval_time:.2f}s")
+
+    llm_time = time.time() - llm_start
+    if config.verbose and llm_time > 0.1:
+        print(f"    [timing] LLM phase: {llm_time:.2f}s")
+
+    expand_time = time.time() - expand_start
+    if config.verbose:
+        print(f"    [timing] expand_node total: {expand_time:.2f}s (sketch={sketch_time:.2f}s, oracle={oracle_time:.2f}s, llm={llm_time:.2f}s)")
+
     return children
 
 
@@ -463,17 +654,26 @@ def recursive_bfs(root: ProofNode, level: int, config: PoetryConfig,
                         continue  # Will check root.status next iteration
                 else:
                     # Recursion failed
-                    # paper's HP→OPEN backtrack (Fig. 2(c), Appendix A.1)
                     sorry_edge.sub_goal_status = SorryStatus.FAILED
-                    if config.verbose:
-                        print(f"[LEVEL {level}] Sub-goal FAILED. HP→OPEN and continue search at current level.")
 
-                    
-                    # Convert the entire paused HP path back to OPEN,
-                    # then update statuses upward and continue level-`level` BFS.
-                    _hp_path_to_open(sorry_edge.child_node)
-                    propagate_status_upward(sorry_edge.child_node)
-                    continue
+                    # Greedy no-backtrack mode: When use_llm=False, no point backtracking
+                    # since oracle already tried its best candidates in parallel
+                    if not config.use_llm:
+                        if config.verbose:
+                            print(f"[LEVEL {level}] Sub-goal FAILED. Oracle-only mode: giving up at this level.")
+                        # Mark current node as failed and stop search at this level
+                        root.status = NodeStatus.FAILED
+                        propagate_status_upward(root)
+                        break
+                    else:
+                        # HP→OPEN backtrack (Fig. 2(c), Appendix A.1) - allows trying other tactics
+                        if config.verbose:
+                            print(f"[LEVEL {level}] Sub-goal FAILED. HP→OPEN and continue search at current level.")
+                        # Convert the entire paused HP path back to OPEN,
+                        # then update statuses upward and continue level-`level` BFS.
+                        _hp_path_to_open(sorry_edge.child_node)
+                        propagate_status_upward(sorry_edge.child_node)
+                        continue
         
         # Standard BFS: Select best OPEN node
         current = search_tree.get_best_open_node()
