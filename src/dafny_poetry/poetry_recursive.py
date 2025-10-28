@@ -654,17 +654,26 @@ def recursive_bfs(root: ProofNode, level: int, config: PoetryConfig,
                         continue  # Will check root.status next iteration
                 else:
                     # Recursion failed
-                    # paper's HP→OPEN backtrack (Fig. 2(c), Appendix A.1)
                     sorry_edge.sub_goal_status = SorryStatus.FAILED
-                    if config.verbose:
-                        print(f"[LEVEL {level}] Sub-goal FAILED. HP→OPEN and continue search at current level.")
 
-                    
-                    # Convert the entire paused HP path back to OPEN,
-                    # then update statuses upward and continue level-`level` BFS.
-                    _hp_path_to_open(sorry_edge.child_node)
-                    propagate_status_upward(sorry_edge.child_node)
-                    continue
+                    # Greedy no-backtrack mode: When use_llm=False, no point backtracking
+                    # since oracle already tried its best candidates in parallel
+                    if not config.use_llm:
+                        if config.verbose:
+                            print(f"[LEVEL {level}] Sub-goal FAILED. Oracle-only mode: giving up at this level.")
+                        # Mark current node as failed and stop search at this level
+                        root.status = NodeStatus.FAILED
+                        propagate_status_upward(root)
+                        break
+                    else:
+                        # HP→OPEN backtrack (Fig. 2(c), Appendix A.1) - allows trying other tactics
+                        if config.verbose:
+                            print(f"[LEVEL {level}] Sub-goal FAILED. HP→OPEN and continue search at current level.")
+                        # Convert the entire paused HP path back to OPEN,
+                        # then update statuses upward and continue level-`level` BFS.
+                        _hp_path_to_open(sorry_edge.child_node)
+                        propagate_status_upward(sorry_edge.child_node)
+                        continue
         
         # Standard BFS: Select best OPEN node
         current = search_tree.get_best_open_node()
