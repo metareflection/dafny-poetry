@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/metareflection/dafny-poetry)
+
 # dafny-poetry
 
 Implementation of the [POETRY][poetry] algorithm (NeurIPS 2024) for Dafny.
