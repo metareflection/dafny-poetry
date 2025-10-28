@@ -382,11 +382,16 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
 
         # PERF: Evaluate all oracle candidates in parallel with early termination
         if guesses:
+            # Apply max_branches limit to oracle (same as LLM)
+            guesses_to_try = guesses[:config.max_branches]
+            if config.verbose and len(guesses) > config.max_branches:
+                print(f"    [oracle] Limiting to first {config.max_branches} of {len(guesses)} guesses")
+
             oracle_eval_start = time.time()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(guesses))) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(guesses_to_try))) as executor:
                 futures = {
                     executor.submit(_evaluate_oracle_candidate, node, config, idx, patch, src_text, admit_ctx): idx
-                    for idx, patch in enumerate(guesses)
+                    for idx, patch in enumerate(guesses_to_try)
                 }
 
                 for future in concurrent.futures.as_completed(futures):
@@ -402,8 +407,8 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                                 print(f"    [oracle] Complete proof found! Stopping early.")
                             break
             oracle_eval_time = time.time() - oracle_eval_start
-            if config.verbose and len(guesses) > 1:
-                print(f"    [timing] Oracle evaluation: {oracle_eval_time:.2f}s for {len(guesses)} candidates")
+            if config.verbose and len(guesses_to_try) > 1:
+                print(f"    [timing] Oracle evaluation: {oracle_eval_time:.2f}s for {len(guesses_to_try)} candidates")
 
     oracle_time = time.time() - oracle_start
     if config.verbose and oracle_time > 0.1:
