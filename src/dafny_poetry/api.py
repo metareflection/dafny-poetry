@@ -28,6 +28,7 @@ def verify_dafny(
     dfy_source: str,
     max_depth: int = 3,
     max_branches: int = 2,
+    max_iterations: int = 20,
     use_sketcher: bool = True,
     use_llm: bool = True,
     llm_tries: int = 2,
@@ -43,6 +44,7 @@ def verify_dafny(
         dfy_source: Dafny source code as a string
         max_depth: Maximum POETRY loop depth (default: 3)
         max_branches: Maximum candidates per expansion (LLM and Oracle) (default: 2)
+        max_iterations: Maximum BFS iterations per level (default: 20)
         use_sketcher: Whether to use symbolic sketcher (default: True)
         use_llm: Whether to use LLM for proof repair (default: True)
         llm_tries: Number of LLM attempts per iteration (default: 2)
@@ -79,6 +81,7 @@ def verify_dafny(
         config = PoetryConfig(
             max_depth=max_depth,
             max_branches=max_branches,
+            max_iterations=max_iterations,
             global_timeout=timeout,
             local_timeout=120,  # Default
             use_sketcher=use_sketcher,

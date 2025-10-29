@@ -50,6 +50,7 @@ class PoetryConfig:
     """Configuration for POETRY algorithm."""
     max_depth: int = 10
     max_branches: int = 2  # Number of LLM samples per expansion
+    max_iterations: int = 20  # Maximum BFS iterations per level
     global_timeout: int = 600
     local_timeout: int = 120  # Per level for depth > 1
     use_sketcher: bool = True
@@ -586,11 +587,18 @@ def recursive_bfs(root: ProofNode, level: int, config: PoetryConfig,
     
     # Main BFS loop
     iteration = 0
-    while (time.time() - level_start < timeout and 
+    while (time.time() - level_start < timeout and
            time.time() - start_time < config.global_timeout):
-        
+
         iteration += 1
-        
+
+        # Check iteration limit
+        if iteration > config.max_iterations:
+            if config.verbose:
+                print(f"[LEVEL {level}] Max iterations ({config.max_iterations}) reached")
+            root.status = NodeStatus.FAILED
+            return NodeStatus.FAILED, root
+
         # Check termination: root proved or all failed
         if root.status == NodeStatus.PROVED:
             if config.verbose:
