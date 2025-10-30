@@ -334,6 +334,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                         children.append(child)
                         if config.verbose:
                             print(f"    [{attempt}] COMPLETE PROOF! 0 admits (gen={sketcher_gen_time:.2f}s, verify={verify_time:.2f}s)")
+                        return children # stop early
                     else:
                         # Need admitter (use default 30s timeout, down from 180s)
                         admit_start = time.time()
