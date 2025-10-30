@@ -59,6 +59,7 @@ class PoetryConfig:
     out_dir: pathlib.Path = pathlib.Path("poetry_out")
     verbose: bool = False
     oracle: Optional[Callable[[str], list[str]]] = None
+    sketch_oracle: Optional[Callable[[str], list[str]]] = None
 
 
 def _read(p: pathlib.Path) -> str:
@@ -286,22 +287,33 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
     current_body = extract_method_body_text(src_text, method)
     if _looks_top_level(node, current_body or ""):
         if config.verbose: print(f"    [top-level] method={method}")
-        if config.use_sketcher or config.use_llm:
+        for attempt in ['sketcher', 'sketch_oracle', 'llm']:
             try:
                 sketcher_gen_start = time.time()
-                if config.use_sketcher:
+                sk_body = None
+
+                if attempt == 'sketcher' and config.use_sketcher:
                     # PERF: Use default 30s timeout (down from 120s)
                     sk_body = run_sketcher(node.file_path, "induction_search", method=method)
-                elif config.use_llm:
+                elif attempt == 'sketch_oracle' and config.sketch_oracle:
+                    # Replace method body with SKETCH HERE marker for oracle
+                    src_prompt = replace_method_body(src_text, method, "/*[SKETCH HERE]*/")
+                    guesses = list(set(config.sketch_oracle(src_prompt)))
+                    sk_body = guesses[0] if guesses else None
+                elif attempt == 'llm' and config.use_llm:
                     sk_body = llm_agent.propose_new_body(
                         method, "", "",  "", file_source=src_text,
                         tries=max(1, config.llm_tries), sketch=True)
+                else:
+                    continue
+
                 sketcher_gen_time = time.time() - sketcher_gen_start
 
                 if sk_body and sk_body.strip():
-                    src_text = _read(node.file_path)
-                    replaced = replace_method_body(src_text, method, sk_body.strip())
-                    cand = write_version(config.out_dir, node.file_path, f"sketch_{node.depth}", replaced)
+                    src_text_fresh = _read(node.file_path)
+                    replaced = replace_method_body(src_text_fresh, method, sk_body.strip())
+                    # Use unique filename for each attempt
+                    cand = write_version(config.out_dir, node.file_path, f"sketch_{node.depth}_{attempt}", replaced)
 
                     # PERF: Quick verify first
                     verify_start = time.time()
@@ -310,17 +322,18 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
 
                     if result.success:
                         # Perfect sketch that completes the proof!
+                        action_name = f"{attempt}_complete"
                         child = ProofNode(
                             file_path=cand,
                             admits=0,
                             parent=node,
-                            action_taken="induction_complete" if config.use_sketcher else "llm_sketch_complete",
+                            action_taken=action_name,
                             score=node.score + float(node.admits) + 2.0,
                             depth=node.depth
                         )
                         children.append(child)
                         if config.verbose:
-                            print(f"    [sketch] COMPLETE PROOF! 0 admits (gen={sketcher_gen_time:.2f}s, verify={verify_time:.2f}s)")
+                            print(f"    [{attempt}] COMPLETE PROOF! 0 admits (gen={sketcher_gen_time:.2f}s, verify={verify_time:.2f}s)")
                     else:
                         # Need admitter (use default 30s timeout, down from 180s)
                         admit_start = time.time()
@@ -334,7 +347,7 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                             compiles = True
                         except Exception as e:
                             compiles = False
-                            if config.verbose: print(f"    [sketch] failed to compile: {e}")
+                            if config.verbose: print(f"    [{attempt}] failed to compile: {e}")
                         # Seed acceptance: either strict improvement, or small admit growth at method entry
                         progress = admits_after < node.admits
                         small_growth_ok = admits_after <= node.admits + STRUCTURE_DELTA_MAX
@@ -343,18 +356,18 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                                 file_path=cand_after,
                                 admits=admits_after,
                                 parent=node,
-                                action_taken="induction" if config.use_sketcher else "llm_sketch",
+                                action_taken=attempt,
                                 score=node.score + 1.0,
                                 depth=node.depth
                             )
                             children.append(child)
                             if config.verbose:
-                                print(f"    [sketch] accepted: {admits_after} admits (was {node.admits}) (gen={sketcher_gen_time:.2f}s, verify={verify_time:.2f}s, admit={admit_time:.2f}s)")
+                                print(f"    [{attempt}] accepted: {admits_after} admits (was {node.admits}) (gen={sketcher_gen_time:.2f}s, verify={verify_time:.2f}s, admit={admit_time:.2f}s)")
                         else:
-                            if config.verbose: print(f"    [sketch] rejected: progress={progress}, small_growth_ok={small_growth_ok}, compiles={compiles}")
+                            if config.verbose: print(f"    [{attempt}] rejected: progress={progress}, small_growth_ok={small_growth_ok}, compiles={compiles}")
             except Exception as e:
                 if config.verbose:
-                    print(f"    [sketch] failed: {e}")
+                    print(f"    [{attempt}] failed: {e}")
 
     sketch_time = time.time() - sketch_start
     if config.verbose and sketch_time > 0.1:

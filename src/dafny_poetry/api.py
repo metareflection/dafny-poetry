@@ -35,7 +35,8 @@ def verify_dafny(
     timeout: int = 600,
     verbose: bool = False,
     out_dir: Optional[pathlib.Path] = None,
-    oracle: Optional[Callable[[str], list[str]]] = None
+    oracle: Optional[Callable[[str], list[str]]] = None,
+    sketch_oracle: Optional[Callable[[str], list[str]]] = None
 ) -> PoetryResult:
     """
     Attempt to verify a Dafny program using POETRY.
@@ -52,6 +53,7 @@ def verify_dafny(
         verbose: Print progress messages (default: False)
         out_dir: Output directory for intermediate files (default: temp dir)
         oracle: Optional oracle function for generating proof candidates
+        sketch_oracle: Optional oracle function for generating sketch candidates
 
     Returns:
         PoetryResult with success status, final file, and statistics
@@ -89,7 +91,8 @@ def verify_dafny(
             llm_tries=llm_tries,
             out_dir=out_dir,
             verbose=verbose,
-            oracle=oracle
+            oracle=oracle,
+            sketch_oracle=sketch_oracle
         )
 
         # Run POETRY
