@@ -140,29 +140,34 @@ def _evaluate_oracle_candidate(node: ProofNode, config: PoetryConfig, sample_idx
         verify_time = time.time() - verify_start
 
         if result.success:
-            # Complete proof from oracle!
-            eval_time = time.time() - eval_start
-            if config.verbose:
-                print(f"      [oracle_{sample_idx}] COMPLETE! (verify={verify_time:.2f}s, total={eval_time:.2f}s)")
-            score_delta = float(node.admits) + 0.5
-            return ProofNode(
-                file_path=cand,
-                admits=0,
-                parent=node,
-                action_taken=f"oracle_patch_{sample_idx}",
-                score=node.score + score_delta,
-                depth=node.depth
-            )
-        else:
-            # Parse/typecheck gate
-            _ = run_sketcher(cand, "errors_warnings", method=None, timeout=30)
-            # Run admitter
-            admit_start = time.time()
-            cand_patched = run_dafny_admitter(cand, mode="admit", timeout=30)
-            admits_after = count_admits(cand_patched)
-            admit_time = time.time() - admit_start
+            # Verification succeeded - check if there are still admits
+            admits_in_cand = count_admits_in_string(_read(cand))
+            if admits_in_cand == 0:
+                # Complete proof from oracle!
+                eval_time = time.time() - eval_start
+                if config.verbose:
+                    print(f"      [oracle_{sample_idx}] COMPLETE! (verify={verify_time:.2f}s, total={eval_time:.2f}s)")
+                score_delta = float(node.admits) + 0.5
+                return ProofNode(
+                    file_path=cand,
+                    admits=0,
+                    parent=node,
+                    action_taken=f"oracle_patch_{sample_idx}",
+                    score=node.score + score_delta,
+                    depth=node.depth
+                )
+        
+        # Either verification failed OR verification succeeded but still has admits
+        # In both cases, run admitter
+        # Parse/typecheck gate
+        _ = run_sketcher(cand, "errors_warnings", method=None, timeout=30)
+        # Run admitter
+        admit_start = time.time()
+        cand_patched = run_dafny_admitter(cand, mode="admit", timeout=30)
+        admits_after = count_admits(cand_patched)
+        admit_time = time.time() - admit_start
 
-            if admits_after <= node.admits:
+        if admits_after <= node.admits:
                 # small bonus for eliminating the focus
                 score_delta = float(node.admits - admits_after) + 0.5 if admits_after < node.admits else -0.5
                 eval_time = time.time() - eval_start
@@ -207,21 +212,24 @@ def _evaluate_llm_candidate(node: ProofNode, config: PoetryConfig, sample_idx: i
         verify_time = time.time() - verify_start
 
         if result.success:
-            # Perfect! No admits needed
-            eval_time = time.time() - eval_start
-            if config.verbose:
-                print(f"      [llm_{sample_idx}] COMPLETE! (verify={verify_time:.2f}s, total={eval_time:.2f}s)")
-            return ProofNode(
-                file_path=cand,
-                admits=0,
-                parent=node,
-                action_taken=f"llm_patch_{sample_idx}_complete",
-                score=node.score + float(node.admits) + 1.0,
-                depth=node.depth
-            )
+            # Verification succeeded - check if there are still admits
+            admits_in_cand = count_admits_in_string(_read(cand))
+            if admits_in_cand == 0:
+                # Perfect! No admits needed
+                eval_time = time.time() - eval_start
+                if config.verbose:
+                    print(f"      [llm_{sample_idx}] COMPLETE! (verify={verify_time:.2f}s, total={eval_time:.2f}s)")
+                return ProofNode(
+                    file_path=cand,
+                    admits=0,
+                    parent=node,
+                    action_taken=f"llm_patch_{sample_idx}_complete",
+                    score=node.score + float(node.admits) + 1.0,
+                    depth=node.depth
+                )
 
         # PERF: Only run admitter if quick verify shows progress
-        if result.errors < 5:  # Heuristic: if few errors, worth admitting
+        if result.success or result.errors < 5:  # Run if verify succeeded (but has admits) or few errors
             # Parse/typecheck gate (quick)
             _ = run_sketcher(cand, "errors_warnings", method=None, timeout=10)
             # Now run admitter with reduced timeout
@@ -321,20 +329,27 @@ def expand_node(node: ProofNode, config: PoetryConfig) -> List[ProofNode]:
                     verify_time = time.time() - verify_start
 
                     if result.success:
-                        # Perfect sketch that completes the proof!
-                        action_name = f"{attempt}_complete"
-                        child = ProofNode(
-                            file_path=cand,
-                            admits=0,
-                            parent=node,
-                            action_taken=action_name,
-                            score=node.score + float(node.admits) + 2.0,
-                            depth=node.depth
-                        )
-                        children.append(child)
-                        if config.verbose:
-                            print(f"    [{attempt}] COMPLETE PROOF! 0 admits (gen={sketcher_gen_time:.2f}s, verify={verify_time:.2f}s)")
-                        return children # stop early
+                        # Verification succeeded - but check if there are still admits
+                        admits_in_cand = count_admits_in_string(_read(cand))
+                        if admits_in_cand == 0:
+                            # Perfect sketch that completes the proof!
+                            action_name = f"{attempt}_complete"
+                            child = ProofNode(
+                                file_path=cand,
+                                admits=0,
+                                parent=node,
+                                action_taken=action_name,
+                                score=node.score + float(node.admits) + 2.0,
+                                depth=node.depth
+                            )
+                            children.append(child)
+                            if config.verbose:
+                                print(f"    [{attempt}] COMPLETE PROOF! 0 admits (gen={sketcher_gen_time:.2f}s, verify={verify_time:.2f}s)")
+                            return children # stop early
+                        else:
+                            # Verification passed but still has admits - treat as partial progress
+                            if config.verbose:
+                                print(f"    [{attempt}] Verification succeeded but has {admits_in_cand} admits, running admitter")
                     else:
                         # Need admitter (use default 30s timeout, down from 180s)
                         admit_start = time.time()
